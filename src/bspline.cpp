@@ -1,0 +1,256 @@
+/**
+* Generates a B-spline curve from a set of control points. The spline in this
+* code is intended to be cubic (p = 3) but can be changed to any order as long
+* as you have enough control points. The B-spline knot vector is defined wiht
+* the range [0,1] and uniformly split. The vector of points along the line
+* (defined as 'x') is also on the range of [0,1] and split uniformly, but the
+* resolution of the line can be defined. The path is generated using De Boor's
+* Algorithm (https://en.wikipedia.org/wiki/De_Boor%27s_algorithm) and then
+* converted to a ROS nav_msgs:Path message and published.
+*/
+
+// TODO: consider making your own message type with a vector of
+// geometry_msgs::Points[] as the control points, an Int as the polynomical
+// order, and another Int for the line resolution
+
+// TODO: add a parameter that let's you set the frame that the path is in
+// (odom/map/world/etc)
+
+// TODO: publish an array of marker points for visualizing the control points,
+// make this a debugging feature that you can turn on or off
+
+#include <iostream>
+#include <vector>
+#include <Eigen>
+#include <ros/ros.h>
+#include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Vector3.h>
+#include <visualization_msgs/Marker.h>
+
+using namespace std;
+using namespace Eigen;
+
+class GraspPath
+{
+private:
+    // Path Variables
+    vector<Vector2d> m_control_points; // Control points
+    vector<double> m_knots; // Knot vector
+    vector<double> m_x; // 'x' vector
+    int m_x_size; // path resolution
+    vector<int> m_k; // 'k' vector
+    int m_p; // Polynomial order
+    vector<Vector2d> m_path; // Vector path
+
+    // ROS Objects
+    ros::NodeHandle nh_;
+    ros::Publisher pub_path;
+    bool debug_control_points; // if true, publishes the control points as markers for rviz
+    ros::Publisher pub_control_points;
+    nav_msgs::Path ros_path;
+    visualization_msgs::Marker ros_control_points;
+public:
+    GraspPath() : nh_("~")
+    {
+        // Define the polynomial order (prefer cubic, p = 3)
+        m_p = 3;
+
+        // Define resolution of the line
+        m_x_size = 100;
+
+        // Set up control points
+        m_control_points.push_back(Vector2d(1,1));
+        m_control_points.push_back(Vector2d(2,5));
+        m_control_points.push_back(Vector2d(4,7));
+        m_control_points.push_back(Vector2d(6,8));
+        m_control_points.push_back(Vector2d(10,9));
+        m_control_points.push_back(Vector2d(9,6));
+        m_control_points.push_back(Vector2d(8,4));
+        m_control_points.push_back(Vector2d(6,3));
+        m_control_points.push_back(Vector2d(5,2.5));
+        m_control_points.push_back(Vector2d(4,3));
+
+        // Define ROS Objects
+        pub_path = nh_.advertise<nav_msgs::Path>("path", 1);
+
+        // Publish the control points for debugging visualization
+        debug_control_points = true;
+        if (debug_control_points) {
+            // Create publisher
+            pub_control_points = nh_.advertise<visualization_msgs::Marker>("control_points", 1);
+
+            // Initialize Marker message
+            ros_control_points.header.frame_id = "odom";
+            ros_control_points.id = 0;
+            ros_control_points.type = visualization_msgs::Marker::SPHERE_LIST;
+            ros_control_points.action = visualization_msgs::Marker::ADD;
+            ros_control_points.scale.x = 0.1;
+            ros_control_points.scale.y = 0.1;
+            ros_control_points.scale.z = 0.1;
+            ros_control_points.color.r = 1;
+            ros_control_points.color.g = 0;
+            ros_control_points.color.b = 0;
+            ros_control_points.color.a = 1;
+            ros_control_points.lifetime = ros::Duration(0);
+
+            ros_control_points.pose.position.x = 0;
+            ros_control_points.pose.position.y = 0;
+            ros_control_points.pose.position.z = 0;
+            ros_control_points.pose.orientation.x = 0;
+            ros_control_points.pose.orientation.y = 0;
+            ros_control_points.pose.orientation.z = 0;
+            ros_control_points.pose.orientation.w = 1;
+
+            // Convert control points vector into marker points
+            ros_control_points.points.resize(m_control_points.size());
+            for (int i = 0; i < m_control_points.size(); i++) {
+                ros_control_points.points.at(i).x = m_control_points.at(i)[0];
+                ros_control_points.points.at(i).y = m_control_points.at(i)[1];
+            }
+        }
+
+        constructVectors();
+        generatePath();
+    }
+
+    // De Boor's Algorithm Implementation
+    Vector2d deBoors(int k, double x, const vector<double> &t, const vector<Vector2d> &c, int p)
+    {
+        /**
+        * Evaluates the B-spline function at 'x'
+        *
+        * Args
+        * -----
+        * k: index of knot interval that contains x
+        * x: position along curve (goes between lowest knot value to highest
+        *    knot value)
+        * t: array of knot positions, needs to be padded with 'p' extra
+        *    endpoints
+        * c: array of control points
+        * p: degree of B-spline
+        */
+
+        vector< Vector2d > d(p+1);
+        for (int j = 0; j <= p; j++) {
+            d.at(j) = c.at(j+k-p);
+        }
+        for (int r = 1; r <= p; r++) {
+            for (int j = p; j >= r; j--) {
+                double alpha = (x - t.at(j+k-p)) / (t.at(j+1+k-r) - t.at(j+k-p));
+                d.at(j) = (1 - alpha)*d.at(j-1) + alpha*d.at(j);
+            }
+        }
+
+        return d.at(p);
+    }
+
+    // Generate vectors using the given control points
+    void constructVectors()
+    {
+        /**
+        * Generates the knot vector and the vectors for the position along the
+        * path (m_x) and its corresponding knot vector interval (m_k). A check
+        * is made to make sure the polynomial order does not exceed the number
+        * of control points - 1.
+        */
+
+        // Check that the polynomial order does not exceed control points - 1
+        if (m_p >= m_control_points.size()) {
+            // DEBUG: print a warning
+            cout << "[WARN] The provided B-spline polynomial order of " << m_p << " requires at least " << (m_p + 1) << " control points.";
+            cout << " Only " << m_control_points.size() << " control points were provided.";
+            cout << " The polynomial order will be reduced to " << (m_control_points.size() - 1) << ".\n";
+
+            m_p = m_control_points.size() - 1;
+        }
+
+        // Generate the knot vector based on the number of control points
+        // Need at least (m_p - 3) more control points than internal knot points
+        // (that's m_p - 1 more control points than internal knots + the end points, so you need to add 'm_p' repeated knot endpoints)
+        int m_knot_size = m_control_points.size() - (m_p - 1);
+        m_knots.resize(m_knot_size, 0.0);
+        double div_size = 1.0/(m_knot_size - 1.0);
+        for (int i = 0; i < m_knots.size(); i++) {
+            m_knots.at(i) = i*div_size;
+        }
+
+        // Append the additional 'm_p' knots at each end
+        m_knots.resize(m_knot_size + m_p, 1.0);
+        m_knots.insert(m_knots.begin(), m_p, 0.0);
+
+        // Generate the 'm_x' and 'm_k' vectors
+        m_x.resize(m_x_size, 0.0);
+        m_k.resize(m_x_size, 0);
+        div_size = 1.0/(m_x_size - 1.0);
+        for (int i = 0; i < m_x.size(); i++) {
+            m_x.at(i) = i*div_size;
+            for (int j = m_p; j < (m_knots.size()-1)-m_p; j++) {
+                if (m_x.at(i) >= m_knots.at(j)) {
+                    m_k.at(i) = j;
+                }
+            }
+        }
+    }
+
+    // Iterate through all positions using DeBoor's algorithm to generate the path vector
+    void generatePath()
+    {
+        /**
+        * Iterates through each point in the 'm_x' vector and calculates the
+        * corresponding path position using De Boor's algorithm.
+        */
+        m_path.resize(m_x.size());
+
+        for (int i = 0; i < m_x.size(); i++) {
+            Vector2d path_point = deBoors(m_k.at(i), m_x.at(i), m_knots, m_control_points, m_p);
+            m_path.at(i) = path_point;
+        }
+
+        // Convert vector path into a ROS message path
+        ros_path.header.frame_id = "odom";
+        ros_path.poses.resize(m_path.size());
+        geometry_msgs::PoseStamped pose;
+        for (int i = 0; i < m_path.size(); i++) {
+            pose.pose.position.x = m_path.at(i)[0];
+            pose.pose.position.y = m_path.at(i)[1];
+            ros_path.poses.at(i) = pose;
+        }
+    }
+
+    // Publish
+    void publishPath()
+    {
+        pub_path.publish(ros_path);
+    }
+
+    // Publish control points as markers for debugging
+    void publishControlPoints()
+    {
+        if (debug_control_points) {
+            // // Delete previous markers
+            // visualization_msgs::Marker delete_markers;
+            // delete_markers.action = visualization_msgs::Marker::DELETEALL;
+            // Publish the values
+            pub_control_points.publish(ros_control_points);
+        }
+    }
+};
+
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "bspline_path");
+    GraspPath grasp_path = GraspPath();
+
+    ros::Rate rate(10);
+
+    while (ros::ok()) {
+        grasp_path.publishPath();
+        grasp_path.publishControlPoints();
+        ros::spinOnce();
+        rate.sleep();
+    }
+
+    return 0;
+}
