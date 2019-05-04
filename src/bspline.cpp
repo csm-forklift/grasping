@@ -10,7 +10,7 @@
 */
 
 // TODO: consider making your own message type with a vector of
-// geometry_msgs::Points[] as the control points, an Int as the polynomical
+// geometry_msgs::Points[] as the control points, an Int as the polynomial
 // order, and another Int for the line resolution
 
 // TODO: add a parameter that let's you set the frame that the path is in
@@ -24,8 +24,10 @@
 #include <Eigen>
 #include <ros/ros.h>
 #include <nav_msgs/Path.h>
+#include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Vector3.h>
+#include <tf/tf.h>
 #include <visualization_msgs/Marker.h>
 
 using namespace std;
@@ -45,19 +47,34 @@ private:
 
     // ROS Objects
     ros::NodeHandle nh_;
+    ros::Subscriber sub_roll; // reads the roll position and approach angle
+    ros::Subscriber sub_forklift; // reads the current forklift pose
     ros::Publisher pub_path;
     bool debug_control_points; // if true, publishes the control points as markers for rviz
     ros::Publisher pub_control_points;
     nav_msgs::Path ros_path;
     visualization_msgs::Marker ros_control_points;
+    geometry_msgs::PoseStamped roll_pose; // contains the roll position and approach angle
+    geometry_msgs::PoseStamped forklift_pose; // the forklifts current pose
+
+    // Forklift Dimensions
+    double body_length; // forklift body length
+    double clamp_length; // length of long arm of clamp
+    double total_length; // total length of the forklift + clamp
+
+    // Roll parameters
+    double roll_radius; // radius of the paper roll
+
 public:
     GraspPath() : nh_("~")
     {
-        // Define the polynomial order (prefer cubic, p = 3)
-        m_p = 3;
-
-        // Define resolution of the line
-        m_x_size = 100;
+        // Store parameters
+        nh_.param<int>("path/polynomial_order", m_p, 3); // Define the polynomial order (prefer cubic, p = 3)
+        nh_.param<int>("path/resolution", m_x_size, 100); // Define resolution of the line
+        nh_.param<double>("/forklift/body/length", body_length, 2.5601);
+        nh_.param<double>("/forklift/body/total", total_length, 3.5659);
+        nh_.param<double>("/forklift/clamp/long_length", clamp_length, 1.0058);
+        nh_.param<double>("roll_radius", roll_radius, 0.20);
 
         // Set up control points
         m_control_points.push_back(Vector2d(1,1));
@@ -73,6 +90,13 @@ public:
 
         // Define ROS Objects
         pub_path = nh_.advertise<nav_msgs::Path>("path", 1);
+        // NOTE: the pose information from this message only contains the (x,y)
+        // location of the roll and the desired approach angle stored in the
+        // variable 'pose.pose.orientation.z'. The orientation is not an actual
+        // quaternion in this particular case.
+        cout << "[WARN]: The pose sent to the '/bspline_path/roll/pose' topic constains the 2D position in (pose.pose.position.x, pose.pose.position.y) and the desired approach angle as (pose.pose.orientation.z)\n";
+        sub_roll = nh_.subscribe("roll/pose", 1, &GraspPath::rollCallback, this);
+        sub_forklift = nh_.subscribe("/odom", 1, &GraspPath::forkliftCallback, this);
 
         // Publish the control points for debugging visualization
         debug_control_points = true;
@@ -216,6 +240,46 @@ public:
             pose.pose.position.y = m_path.at(i)[1];
             ros_path.poses.at(i) = pose;
         }
+    }
+
+    void rollCallback(const geometry_msgs::PoseStamped msg)
+    {
+        // Update the roll pose
+        roll_pose = msg;
+        double x_r = roll_pose.pose.position.x; // x location of roll
+        double y_r = roll_pose.pose.position.y; // y location of roll
+        double alpha = roll_pose.pose.orientation.z; // approach angle
+        double x_f = forklift_pose.pose.position.x; // x location of forklift
+        double y_f = forklift_pose.pose.position.y; // y location of forklift
+
+        // Get yaw angle from quaternion
+        tf::Quaternion q(
+            forklift_pose.pose.orientation.x,
+            forklift_pose.pose.orientation.y,
+            forklift_pose.pose.orientation.z,
+            forklift_pose.pose.orientation.w
+        );
+        tf::Matrix3x3 m(q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
+
+        // Calculate the control points for the desired path
+        m_control_points.clear();
+        m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d((roll_radius + clamp_length)*cos(alpha) + x_r, (roll_radius + clamp_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d((roll_radius + 2*clamp_length)*cos(alpha) + x_r, (roll_radius + 2*clamp_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d((roll_radius + clamp_length + total_length)*cos(alpha) + x_r, (roll_radius + clamp_length + total_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d(clamp_length*cos(yaw) + x_f, clamp_length*sin(yaw) + y_f));
+        m_control_points.push_back(Vector2d(x_f, y_f));
+
+        generatePath();
+    }
+
+    void forkliftCallback(const nav_msgs::Odometry msg)
+    {
+        // Update the forklift pose
+        forklift_pose.header = msg.header;
+        forklift_pose.pose = msg.pose.pose;
     }
 
     // Publish
