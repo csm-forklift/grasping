@@ -126,12 +126,7 @@ public:
             ros_control_points.pose.orientation.z = 0;
             ros_control_points.pose.orientation.w = 1;
 
-            // Convert control points vector into marker points
-            ros_control_points.points.resize(m_control_points.size());
-            for (int i = 0; i < m_control_points.size(); i++) {
-                ros_control_points.points.at(i).x = m_control_points.at(i)[0];
-                ros_control_points.points.at(i).y = m_control_points.at(i)[1];
-            }
+            updateControlPoints();
         }
 
         constructVectors();
@@ -242,8 +237,28 @@ public:
         }
     }
 
+    // This callback generates the desired path and publishes it once
     void rollCallback(const geometry_msgs::PoseStamped msg)
     {
+        /**
+         * This callback function receives the pose data for the paper roll and
+         * calculates the B-spline curve from the forklifts current position to
+         * the roll at the desired approach angle. The approach angle is
+         * contained in the 'z' component of the 'orientation' part of the
+         * 'pose'.
+         *
+         * The control points are calculated using the roll and forklift poses
+         * considering the desired approach angle and stopping point. There are
+         * four points placed coming out from the roll in the direction of the
+         * approach angle. One on the roll surface. One a clamp's length away.
+         * Once two clamp's lengths away. And one a forklift length way from
+         * the second point. This is so the baselink, which is the middle of
+         * the front axle, will be roughly two clamp lengths away from the roll
+         * while being aligned straight with the approach angle. This way the
+         * tip of the clamp should be a full clamp length away and the
+         * fine-tuned roll detection can be used for the final approach
+         * distance.
+         */
         // Update the roll pose
         roll_pose = msg;
         double x_r = roll_pose.pose.position.x; // x location of roll
@@ -272,7 +287,11 @@ public:
         m_control_points.push_back(Vector2d(clamp_length*cos(yaw) + x_f, clamp_length*sin(yaw) + y_f));
         m_control_points.push_back(Vector2d(x_f, y_f));
 
+        updateControlPoints();
+        publishControlPoints();
+        constructVectors();
         generatePath();
+        publishPath();
     }
 
     void forkliftCallback(const nav_msgs::Odometry msg)
@@ -286,6 +305,21 @@ public:
     void publishPath()
     {
         pub_path.publish(ros_path);
+    }
+
+    // Convert control points vector into marker points
+    void updateControlPoints()
+    {
+        /**
+         * The control points used to generate the B-spline curve are stored in
+         * 'm_control_points' as 'Vector2d' values. These points are converted
+         * into a set of markers for a ROS message to visualize in RVIZ.
+         */
+        ros_control_points.points.resize(m_control_points.size());
+        for (int i = 0; i < m_control_points.size(); i++) {
+            ros_control_points.points.at(i).x = m_control_points.at(i)[0];
+            ros_control_points.points.at(i).y = m_control_points.at(i)[1];
+        }
     }
 
     // Publish control points as markers for debugging
@@ -310,8 +344,8 @@ int main(int argc, char** argv)
     ros::Rate rate(10);
 
     while (ros::ok()) {
-        grasp_path.publishPath();
-        grasp_path.publishControlPoints();
+        //grasp_path.publishPath();
+        //grasp_path.publishControlPoints();
         ros::spinOnce();
         rate.sleep();
     }

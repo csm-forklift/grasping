@@ -138,6 +138,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/bspline_node.cpp)
 add_executable(bspline_path src/bspline.cpp)
+add_executable(test_points src/test_points.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -154,3 +155,4 @@ add_executable(bspline_path src/bspline.cpp)
 #   ${catkin_LIBRARIES}
 # )
 target_link_libraries(bspline_path ${catkin_LIBRARIES})
+target_link_libraries(test_points ${catkin_LIBRARIES})
