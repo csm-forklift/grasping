@@ -20,7 +20,7 @@ int main(int argc, char** argv)
     double approach_angle = (5.0/4.0)*M_PI;
     double forklift_x = 2;
     double forklift_y = 0;
-    double forklift_yaw = M_PI;
+    double forklift_yaw = 0;
 
     // Start ROS node
     ros::init(argc, argv, "test_points");

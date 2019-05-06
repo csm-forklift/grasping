@@ -1,13 +1,13 @@
 /**
-* Generates a B-spline curve from a set of control points. The spline in this
-* code is intended to be cubic (p = 3) but can be changed to any order as long
-* as you have enough control points. The B-spline knot vector is defined wiht
-* the range [0,1] and uniformly split. The vector of points along the line
-* (defined as 'x') is also on the range of [0,1] and split uniformly, but the
-* resolution of the line can be defined. The path is generated using De Boor's
-* Algorithm (https://en.wikipedia.org/wiki/De_Boor%27s_algorithm) and then
-* converted to a ROS nav_msgs:Path message and published.
-*/
+ * Generates a B-spline curve from a set of control points. The spline in this
+ * code is intended to be cubic (p = 3) but can be changed to any order as long
+ * as you have enough control points. The B-spline knot vector is defined wiht
+ * the range [0,1] and uniformly split. The vector of points along the line
+ * (defined as 'x') is also on the range of [0,1] and split uniformly, but the
+ * resolution of the line can be defined. The path is generated using De Boor's
+ * Algorithm (https://en.wikipedia.org/wiki/De_Boor%27s_algorithm) and then
+ * converted to a ROS nav_msgs:Path message and published.
+ */
 
 // TODO: consider making your own message type with a vector of
 // geometry_msgs::Points[] as the control points, an Int as the polynomial
@@ -21,6 +21,7 @@
 
 #include <iostream>
 #include <vector>
+#include <cmath> // used for M_PI (pi constant)
 #include <Eigen>
 #include <ros/ros.h>
 #include <nav_msgs/Path.h>
@@ -137,18 +138,18 @@ public:
     Vector2d deBoors(int k, double x, const vector<double> &t, const vector<Vector2d> &c, int p)
     {
         /**
-        * Evaluates the B-spline function at 'x'
-        *
-        * Args
-        * -----
-        * k: index of knot interval that contains x
-        * x: position along curve (goes between lowest knot value to highest
-        *    knot value)
-        * t: array of knot positions, needs to be padded with 'p' extra
-        *    endpoints
-        * c: array of control points
-        * p: degree of B-spline
-        */
+         * Evaluates the B-spline function at 'x'
+         *
+         * Args
+         * -----
+         * k: index of knot interval that contains x
+         * x: position along curve (goes between lowest knot value to highest
+         *    knot value)
+         * t: array of knot positions, needs to be padded with 'p' extra
+         *    endpoints
+         * c: array of control points
+         * p: degree of B-spline
+         */
 
         vector< Vector2d > d(p+1);
         for (int j = 0; j <= p; j++) {
@@ -168,16 +169,16 @@ public:
     void constructVectors()
     {
         /**
-        * Generates the knot vector and the vectors for the position along the
-        * path (m_x) and its corresponding knot vector interval (m_k). A check
-        * is made to make sure the polynomial order does not exceed the number
-        * of control points - 1.
-        */
+         * Generates the knot vector and the vectors for the position along the
+         * path (m_x) and its corresponding knot vector interval (m_k). A check
+         * is made to make sure the polynomial order does not exceed the number
+         * of control points - 1.
+         */
 
         // Check that the polynomial order does not exceed control points - 1
         if (m_p >= m_control_points.size()) {
             // DEBUG: print a warning
-            cout << "[WARN] The provided B-spline polynomial order of " << m_p << " requires at least " << (m_p + 1) << " control points.";
+            cout << "[WARN]: The provided B-spline polynomial order of " << m_p << " requires at least " << (m_p + 1) << " control points.";
             cout << " Only " << m_control_points.size() << " control points were provided.";
             cout << " The polynomial order will be reduced to " << (m_control_points.size() - 1) << ".\n";
 
@@ -216,9 +217,9 @@ public:
     void generatePath()
     {
         /**
-        * Iterates through each point in the 'm_x' vector and calculates the
-        * corresponding path position using De Boor's algorithm.
-        */
+         * Iterates through each point in the 'm_x' vector and calculates the
+         * corresponding path position using De Boor's algorithm.
+         */
         m_path.resize(m_x.size());
 
         for (int i = 0; i < m_x.size(); i++) {
@@ -277,6 +278,11 @@ public:
         tf::Matrix3x3 m(q);
         double roll, pitch, yaw;
         m.getRPY(roll, pitch, yaw);
+        // Because the forklift will be driving in the reverse direction, the
+        // raw yaw angle must be flipped by 180 deg to point the path in the
+        // right direction. The controller will publish negative values for the
+        // velocity to account for this.
+        yaw = yaw + M_PI;
 
         // Calculate the control points for the desired path
         m_control_points.clear();
