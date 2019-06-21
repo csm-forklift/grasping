@@ -8,15 +8,21 @@ project(grasping)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  nav_msgs
   roscpp
   rospy
   std_msgs
   geometry_msgs
+  sensor_msgs
+  nav_msgs
+  tf
+  cv_bridge
+  pcl_conversions
+  pcl_ros
 )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
+find_package(OpenCV)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -139,6 +145,8 @@ include_directories(
 # add_executable(${PROJECT_NAME}_node src/bspline_node.cpp)
 add_executable(bspline_path src/bspline.cpp)
 add_executable(test_points src/test_points.cpp)
+add_executable(clamp_switch_node src/clamp_switch_node.cpp)
+add_executable(cylinder_detection src/cylinder_detection.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -156,3 +164,5 @@ add_executable(test_points src/test_points.cpp)
 # )
 target_link_libraries(bspline_path ${catkin_LIBRARIES})
 target_link_libraries(test_points ${catkin_LIBRARIES})
+target_link_libraries(clamp_switch_node ${catkin_LIBRARIES})
+target_link_libraries(cylinder_detection ${catkin_LIBRARIES})
