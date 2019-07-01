@@ -1,5 +1,8 @@
 <launch>
 
+    <!-- Start publishing transforms -->
+    <include file="$(find setup_tf)/launch/setup_tf_simulation.launch"/>
+
     <!-- Start velocity controller -->
     <node pkg="robust_navigation" type="velocity_controller_reverse" name="velocity_controller_reverse" output="screen"/>
     

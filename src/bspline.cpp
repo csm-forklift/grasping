@@ -71,7 +71,7 @@ public:
     {
         // Store parameters
         nh_.param<int>("path/polynomial_order", m_p, 3); // Define the polynomial order (prefer cubic, p = 3)
-        nh_.param<int>("path/resolution", m_x_size, 100); // Define resolution of the line
+        nh_.param<int>("path/resolution", m_x_size, 20); // Define resolution of the line
         nh_.param<double>("/forklift/body/length", body_length, 2.5601);
         nh_.param<double>("/forklift/body/total", total_length, 3.5659);
         nh_.param<double>("/forklift/clamp/long_length", clamp_length, 1.0058);
@@ -231,9 +231,11 @@ public:
         ros_path.header.frame_id = "odom";
         ros_path.poses.resize(m_path.size());
         geometry_msgs::PoseStamped pose;
+        int path_seq = 0;
         for (int i = 0; i < m_path.size(); i++) {
             pose.pose.position.x = m_path.at(i)[0];
             pose.pose.position.y = m_path.at(i)[1];
+            pose.header.seq = path_seq++;
             ros_path.poses.at(i) = pose;
         }
     }
@@ -286,12 +288,12 @@ public:
 
         // Calculate the control points for the desired path
         m_control_points.clear();
-        m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d((roll_radius + clamp_length)*cos(alpha) + x_r, (roll_radius + clamp_length)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d((roll_radius + 2*clamp_length)*cos(alpha) + x_r, (roll_radius + 2*clamp_length)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d((roll_radius + clamp_length + total_length)*cos(alpha) + x_r, (roll_radius + clamp_length + total_length)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d(clamp_length*cos(yaw) + x_f, clamp_length*sin(yaw) + y_f));
         m_control_points.push_back(Vector2d(x_f, y_f));
+        m_control_points.push_back(Vector2d(clamp_length*cos(yaw) + x_f, clamp_length*sin(yaw) + y_f));
+        m_control_points.push_back(Vector2d((roll_radius + clamp_length + total_length)*cos(alpha) + x_r, (roll_radius + clamp_length + total_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d((roll_radius + 2*clamp_length)*cos(alpha) + x_r, (roll_radius + 2*clamp_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d((roll_radius + clamp_length)*cos(alpha) + x_r, (roll_radius + clamp_length)*sin(alpha) + y_r));
+        m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
 
         updateControlPoints();
         publishControlPoints();
@@ -350,7 +352,7 @@ int main(int argc, char** argv)
     ros::Rate rate(10);
 
     while (ros::ok()) {
-        //grasp_path.publishPath();
+        grasp_path.publishPath();
         //grasp_path.publishControlPoints();
         ros::spinOnce();
         rate.sleep();

@@ -53,9 +53,7 @@ int main(int argc, char** argv)
     forklift_odom.pose.pose.orientation.z = q.z();
     forklift_odom.pose.pose.orientation.w = q.w();
 
-    // DEBUG:
-    std::cout << "Publishing forklift pose\n";
-
+    // Publish forklift pose
     forklift_pub.publish(forklift_odom);
 
     // Then publish the roll position to generate the B-spline path
@@ -66,9 +64,7 @@ int main(int argc, char** argv)
     roll_pose.pose.position.y = roll_y;
     roll_pose.pose.orientation.z = approach_angle;
 
-    // DEBUG:
-    std::cout << "Publishing roll pose\n";
-
+    // Publish roll pose
     roll_pub.publish(roll_pose);
 
     ros::spin();
