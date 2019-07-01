@@ -257,10 +257,11 @@ void loop()
   
   // Clamp open and close
   
-  if (clamp_grasp <M= 0) 
+  if (clamp_grasp <= 0) 
   {
     // Checking for the plate position
-    if ((stretch_value > 16.0 && stretch_value < 22.0) && (fsrReading < 400))
+    //if ((stretch_value > 16.0 && stretch_value < 22.0) && (fsrReading < 400))
+    if (true)
     {
       // Check for FSR value and limit switch
       //if (fsrReading < 400)

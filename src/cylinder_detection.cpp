@@ -89,6 +89,9 @@ private:
     int threshold_high; // upper cutoff value for accepting a center point from the accumulator
     double variance_tolerance; // upper threshold for the variance
     double target_tolerance; // maximum distance from target to be accepted as a viable cylinder location, in meters
+    double bound_offset; // determines the radial bound inside which the circle points will be considered for calculating the variance
+    double upper_radius; // upper radius calculated using the bound_offset
+    double lower_radius; // lower radius calculated using the bound offset
 
     //===== Filtering Options
     bool use_threshold_filter; // set to true to perform filtering using the accumulator low and high thresholds
@@ -176,6 +179,8 @@ public:
         min_fixed_x = 0.5; // m
         max_fixed_y = 2.5; // m
         min_fixed_y = -2.5; // m
+
+        // Filter pointcloud height
         filter_z_low = -0.100; // m
         filter_z_high = 0.500; // m
         resolution = 256.0; // pixels/m, 256 approx. = 1280 pixels / 5 m
@@ -185,6 +190,11 @@ public:
         threshold_low = (1.0/5)*(2*round(circle_radius*resolution) - 1);
         // Default maximum is number of pixels making half of a circle with 2 layers of pixels
         threshold_high = 2*(2*round(circle_radius*resolution) - 1);
+
+        // Variance filter parameters
+        bound_offset = 0.25*(2*circle_radius); // amount to add and subtract to radius to get the upper and lower bounds for accepting points to use in calculating the variance
+        upper_radius = circle_radius + bound_offset;
+        lower_radius = circle_radius - bound_offset;
         //============================//
 
         //===== Filtering Options =====//
@@ -228,6 +238,15 @@ public:
         pass.setFilterFieldName("z");
         pass.setFilterLimits(filter_z_low, filter_z_high);
         pass.filter(*scene_cloud);
+
+        // TODO: filter point cloud based on angle
+        /* Process
+         * Rotate so that cutoff angle is parallel to the Y axis.
+         * Filter negative X points
+         * Rotate so the other cutoff angle is parallel to the Y axis
+         * Filter negativ X points
+         * Rotate back to original angle
+         */
 
         // DEBUG: Publish filtered pointcloud
         sensor_msgs::PointCloud2 pc_msg;
@@ -426,6 +445,7 @@ public:
             cyl_pub.publish(cylinder_point);
         }
 
+        // Create a marker for cylinder visualization in RVIZ
         visualization_msgs::MarkerArray cyl_markers;
         // Delete previous markers
         visualization_msgs::Marker delete_markers;
@@ -943,6 +963,10 @@ public:
     void checkCenterPoints(std::vector<cv::Point> &points, cv::Mat &top_image)
     {
         // The points vector should be in the image frame (not accumulator frame)
+        // Since the cylinder should only be producing points along the surface,
+        // this function checks to see if there are any points within the
+        // cirlce's radius. If there are, that means this is not a solid
+        // cylinder and can be removed.
 
         // DEBUG: Visually check which points are being removed
         cv::Mat top_image_debug = top_image.clone();
@@ -1050,11 +1074,6 @@ public:
         if (points.size() != variances.size()) {
             std::cout << "ERROR (varianceFilter): 'variances' and 'points' must be the same size." << std::endl;
         }
-
-        // TODO: Tuning parameters, add these to the top as member variables
-        double bound_offset = 0.25*(2*circle_radius); // amount to add and subtract to radius to get the upper and lower bounds for accepting points to use in calculating the variance
-        double upper_radius = circle_radius + bound_offset;
-        double lower_radius = circle_radius - bound_offset;
 
         std::vector<int> var_n(points.size(), 0); // stores the number of points being summed in the variance
 
