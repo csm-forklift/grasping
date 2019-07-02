@@ -13,6 +13,8 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path, OccupancyGrid
 from std_msgs.msg import Bool
 import numpy as np
+from scipy.spatial import ConvexHull
+from scipy.optimize import minimize
 import math
 from inPolygon import pointInPolygon
 
@@ -59,11 +61,11 @@ class ManeuverPath:
         rospy.init_node("maneuver_path")
         self.target_x = rospy.get_param("/target_x", 0.0)
         self.target_y = rospy.get_param("/target_y", 0.0)
-        self.target_approach_angle = rospy.get_param("/approach_angle", 0.0)
+        self.target_approach_angle = rospy.get_param("/target_approach_angle", 0.0)
         self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 10.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
 
         # ROS Publishers and Subscribers
-        self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid self.occupancyGridCallback, queue_size=1)
+        self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid, self.occupancyGridCallback, queue_size=1)
         self.perform_optimization_sub = rospy.Subscriber("~perform_optimization", Bool, self.optimizeManeuver, queue_size=3)
         self.path_pub = rospy.Publisher("~path", Path, queue_size=3)
         self.optimization_success_pub = rospy.Publisher("~optimization_success", Bool, queue_size=3) # indicates whether the optimzation completed successfully or not, to know whether the path is usable
@@ -71,7 +73,7 @@ class ManeuverPath:
         self.obstacles = None
         self.maneuver_path = Path()
         self.maneuver_path.header.frame_id = "/odom"
-        self.optimzation_success = False
+        self.optimization_success = False
         self.rate = rospy.Rate(30)
 
         # Forklift dimensions
@@ -113,7 +115,7 @@ class ManeuverPath:
         self.max_angle = 70 # deg
         self.min_radius = self.axle_distance/np.tan(self.max_angle*(np.pi/180.0))
 
-        self.resolution = 10 # map resolution, updates with each OccupancyGrid map callback
+        self.resolution = 0.10 # map resolution, updates with each OccupancyGrid map callback
 
     def spin(self):
         while not rospy.is_shutdown():
@@ -207,14 +209,14 @@ class ManeuverPath:
         --------
         path: list containing [x,y] pairs of points along the arc
         '''
-        arc_length = r*alpha
-        num_points = math.ceil(arc_length/self.resolution)
+        arc_length = abs(r*alpha)
+        num_points = int(math.ceil(arc_length/self.resolution))
         delta_alpha = alpha/(num_points)
 
         start_position = np.array([pose.x, pose.y])
         R = rotZ2D(pose.theta)
         path = []
-        for i in range(1, num_points+1)
+        for i in range(1, num_points+1):
             path_point = start_position + R.dot(np.array([np.abs(r)*np.sin(i*delta_alpha), r*(1 - np.cos(i*delta_alpha))]))
             path.append([path_point[0], path_point[1]])
 
@@ -281,9 +283,9 @@ class ManeuverPath:
                 make a "closed" polygon
         '''
         # Generate full list of bounding box points
-        points_s = forkliftBoundingBox(pose_s)
-        points_m = forkliftBoundingBox(pose_m)
-        points_f = forkliftBoundingBox(pose_f)
+        points_s = self.forkliftBoundingBox(pose_s)
+        points_m = self.forkliftBoundingBox(pose_m)
+        points_f = self.forkliftBoundingBox(pose_f)
 
         all_points = np.vstack((points_s, points_m, points_f))
 
@@ -297,7 +299,7 @@ class ManeuverPath:
 
         return points
 
-    def rowMajorIndex(i, width):
+    def rowMajorIndex(self, i, width):
         '''
         Takes a single index 'i' of a 1D array representing a Row-Major matrix
         and determines the 2D indices. The top left cell is considered (0,0).
@@ -316,7 +318,7 @@ class ManeuverPath:
 
         return [row, col]
 
-    def gridMapToObstacles(grid):
+    def gridMapToObstacles(self, grid):
         '''
         Converts an OccupancyGrid message into a numpy array of obstacle
         positions.
@@ -332,15 +334,15 @@ class ManeuverPath:
         # Get map parameters
         width = grid.info.width
         resolution = grid.info.resolution
-        origin_x = grid.info.origin.x
-        origin_y = grid.info.origin.y
+        origin_x = grid.info.origin.position.x
+        origin_y = grid.info.origin.position.y
 
         # Iterate through each cell in the grid and determine the obstacle probability
         obstacles = []
         for i in range(len(grid.data)):
             # If there is an obstacle, convert index into row & column
             if (grid.data[i] > 0):
-                [row, col] = rowMajorIndex(i, width)
+                [row, col] = self.rowMajorIndex(i, width)
 
                 # Convert row and column into a position in map frame
                 # The map is in "image frame", meaning that the rows are along the Y
@@ -371,7 +373,7 @@ class ManeuverPath:
         num_obstacles: number of obstacles within the maneuver bounding box
         '''
         # Create polygon of points representing the bounding box
-        polygon = maneuverBoundingBox(pose_s, pose_m, pose_f)
+        polygon = self.maneuverBoundingBox(pose_s, pose_m, pose_f)
 
         # Determine which points are inside the boundary
         [points_in, points_on] = pointInPolygon(obstacles, polygon)
@@ -435,11 +437,19 @@ class ManeuverPath:
         L_f = params["forklift_length"]
         weights = params["weights"]
 
+        # Covnert state to pose
+        pose_s = Pose2D(x_s, y_s, theta_s)
+
         # Get the maneuver poses based on the current design variables
-        [x_m, y_m, theta_m, x_f, y_f, theta_f] = maneuverPoses(x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2)
+        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, r_2, alpha_2)
+
+        # Unpack poses
+        x_f = pose_f.x
+        y_f = pose_f.y
+        theta_f = pose_f.theta
 
         # Calculate the maneuver length
-        maneuver_length = maneuverLength(r_1, alpha_1, r_2, alpha_2)
+        maneuver_length = self.maneuverLength(r_1, alpha_1, r_2, alpha_2)
 
         # Calculate the second point of the B-spline approach curve and get the distnace from the third point
         point2 = [L_f*np.cos(theta_f) + x_f, L_f*np.sin(theta_f) + y_f]
@@ -499,11 +509,14 @@ class ManeuverPath:
         # Initialize constraints
         C = np.zeros(2)
 
+        # Convert states to poses
+        pose_s = Pose2D(x_s, y_s, theta_s)
+
         # Get the maneuver poses based on the current design variables
-        [x_m, y_m, theta_m, x_f, y_f, theta_f] = maneuverPoses(x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2)
+        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, r_2, alpha_2)
 
         # Frist constraint
-        C[0] = -obstaclesInManeuver(x_s, y_s, theta_s, x_m, y_m, theta_m, x_f, y_f, theta_f, params["obstacles"])
+        C[0] = -self.obstaclesInManeuver(pose_s, pose_m, pose_f, params["obstacles"])
 
         # Second constraint
         C[1] = abs(x[3]) - params["min_radius"]
@@ -524,6 +537,11 @@ class ManeuverPath:
         --------
         path: the optimal path as a ROS nav_msgs/Path message
         '''
+        # Get current roll target
+        self.target_x = rospy.get_param("/target_x", self.target_x)
+        self.target_y = rospy.get_param("/target_y", self.target_y)
+        self.target_approach_angle = rospy.get_param("/target_approach_angle", self.target_approach_angle)
+
         # Set initial guess
         x_s = self.target_x + np.cos(self.target_approach_angle)
         y_s = self.target_y + np.sin(self.target_approach_angle)
@@ -534,23 +552,20 @@ class ManeuverPath:
         alpha_2 = np.pi/2
         x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
 
-        # Get obstacle vector
-        obstacles = np.array([[10,10],[11,11],[12,12],[15,20],[14,16],[20,20]])
-
         # Set params
-        params = {"approach_point" : [17,17], "current_pose" : [1,1,-3*np.pi/4], "forklift_length" : (base_to_back + base_to_clamp), "weights" : [10, 1, 1], "obstacles" : obstacles, "min_radius" : min_radius}
+        params = {"approach_point" : [17,17], "current_pose" : [1,1,-3*np.pi/4], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
 
         # Set up optimization problem
-        obj = lambda x: maneuverObjective(x, params)
+        obj = lambda x: self.maneuverObjective(x, params)
         ineq_con = {'type': 'ineq',
-                    'fun' : lambda x: maneuverIneqConstraints(x, params),
+                    'fun' : lambda x: self.maneuverIneqConstraints(x, params),
                     'jac' : None}
         bounds = [(None, None),
                   (None, None),
                   (-np.pi, np.pi),
                   (None, None),
                   (-2*np.pi, 2*np.pi),
-                  (min_radius, None),
+                  (self.min_radius, None),
                   (0, 2*np.pi)]
 
         # Optimize
@@ -570,19 +585,19 @@ class ManeuverPath:
         alpha_2 = -np.sign(alpha_1)*alpha_2
 
         pose_s = Pose2D(x_s, y_s, theta_s)
-        [pose_m, pose_f] = maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
+        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
 
-        path = maneuverSegmentPath(pose_s, r_1, alpha_1)
-        path.extend(maneuverSegmentPath(pose_m, r_2, alpha_2))
+        path = self.maneuverSegmentPath(pose_s, r_1, alpha_1)
+        path.extend(self.maneuverSegmentPath(pose_m, r_2, alpha_2))
         self.maneuver_path.header.stamp = rospy.Time.now()
-        self.maneuver_path.poses.clear()
+        self.maneuver_path.poses = []
         for i in range(len(path)):
             point = PoseStamped()
             point.pose.position.x = path[i][0]
             point.pose.position.y = path[i][1]
             self.maneuver_path.poses.append(point)
 
-        self.path_pub.publish(self.maneuver_path.poses)
+        self.path_pub.publish(self.maneuver_path)
         self.optimization_success = res.success
         opt_success = Bool()
         opt_success.data = self.optimization_success
@@ -595,7 +610,7 @@ class ManeuverPath:
             rospy.set_param("/control_panel_node/goal_y", pose_s.y)
 
 
-    def occupancyGridCallback(msg):
+    def occupancyGridCallback(self, msg):
         '''
         Callback function for the OccupancyGrid created by the mapping node. Sets the member variable 'self.obstacles' as a vector of points representing the presence of obstacles on the map.
 
@@ -606,4 +621,12 @@ class ManeuverPath:
         Returns:
         None
         '''
-        self.obstacles = gridMapToObstacles(msg)
+        self.obstacles = self.gridMapToObstacles(msg)
+
+
+if __name__ == "__main__":
+    try:
+        maneuver_path = ManeuverPath()
+        maneuver_path.spin()
+    except rospy.ROSInterruptException:
+        pass

@@ -123,13 +123,15 @@ def pointInPolygon(points, polygon):
 
     Returns:
     --------
-    in_poly: mx2 vector indicating whether each point in "points" is in the
+    in_poly: mx1 vector indicating whether each point in "points" is in the
              polygon or not
-    on_poly: mx2 vector indicating whether each point in "points" is on the
+    on_poly: mx1 vector indicating whether each point in "points" is on the
              polygon edge or not
     '''
     # Handle the single point case where there is only one dimension or the dimensions are flipped. This includes: (2,), (2,1)
-    if (len(points.shape) == 1):
+    if (points is None):
+        return np.zeros([1,1]), np.zeros([1,1])
+    elif (len(points.shape) == 1):
         points = points.reshape(1,2)
     elif (points.shape[1] != 2):
         points = points.reshape(1,2)
