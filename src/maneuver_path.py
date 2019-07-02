@@ -9,6 +9,9 @@ starting point for the grasping path generation.
 
 
 import rospy
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path, OccupancyGrid
+from std_msgs.msg import Bool
 import numpy as np
 import math
 from inPolygon import pointInPolygon
@@ -49,8 +52,26 @@ def rotZ2D(theta):
 
 class ManeuverPath:
     def __init__(self):
+        #=============#
         # ROS Objects
+        #=============#
+        # ROS Parameters
         rospy.init_node("maneuver_path")
+        self.target_x = rospy.get_param("/target_x", 0.0)
+        self.target_y = rospy.get_param("/target_y", 0.0)
+        self.target_approach_angle = rospy.get_param("/approach_angle", 0.0)
+        self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 10.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
+
+        # ROS Publishers and Subscribers
+        self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid self.occupancyGridCallback, queue_size=1)
+        self.perform_optimization_sub = rospy.Subscriber("~perform_optimization", Bool, self.optimizeManeuver, queue_size=3)
+        self.path_pub = rospy.Publisher("~path", Path, queue_size=3)
+        self.optimization_success_pub = rospy.Publisher("~optimization_success", Bool, queue_size=3) # indicates whether the optimzation completed successfully or not, to know whether the path is usable
+
+        self.obstacles = None
+        self.maneuver_path = Path()
+        self.maneuver_path.header.frame_id = "/odom"
+        self.optimzation_success = False
         self.rate = rospy.Rate(30)
 
         # Forklift dimensions
@@ -96,6 +117,9 @@ class ManeuverPath:
 
     def spin(self):
         while not rospy.is_shutdown():
+            opt_success = Bool()
+            opt_success = self.optimization_success
+            self.optimization_success_pub.publish(opt_success)
             self.rate.sleep()
 
     def maneuverPoses(self, pose_s, r_1, alpha_1, r_2, alpha_2):
@@ -486,23 +510,24 @@ class ManeuverPath:
 
         return C
 
-    def optimizeManeuver(self):
+    def optimizeManeuver(self, msg):
         '''
-        Sets up the optimization problem then calculates the optimal maneuver poses.
+        Sets up the optimization problem then calculates the optimal maneuver
+        poses. Runs when any message is sent to the corresponding subscriber,
+        the 'msg' value does not matter.
 
         Args:
         -----
-        None
+        msg: ROS Bool message
 
         Returns:
         --------
         path: the optimal path as a ROS nav_msgs/Path message
         '''
         # Set initial guess
-        # TODO: need to determine a method for setting a good starting position. I think you should take the desired target postion and approach angle, then move the starting position out by X meters with two 90deg turns.
-        x_s = 15
-        y_s = 10
-        theta_s = -(3*np.pi/4)
+        x_s = self.target_x + np.cos(self.target_approach_angle)
+        y_s = self.target_y + np.sin(self.target_approach_angle)
+        theta_s = self.target_approach_angle # the starting pose is facing backwards, so the approach angle is the same as the starting orientation rather than adding 180deg
         r_1 = 2
         alpha_1 = -np.pi/2
         r_2 = 2
@@ -540,5 +565,45 @@ class ManeuverPath:
         r_2 = res.x[5]
         alpha_2 = res.x[6]
 
-        # TODO: write function for getting a vector of points along the curvature of each path segment.
         # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
+        r_2 = -np.sign(r_1)*r_2
+        alpha_2 = -np.sign(alpha_1)*alpha_2
+
+        pose_s = Pose2D(x_s, y_s, theta_s)
+        [pose_m, pose_f] = maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
+
+        path = maneuverSegmentPath(pose_s, r_1, alpha_1)
+        path.extend(maneuverSegmentPath(pose_m, r_2, alpha_2))
+        self.maneuver_path.header.stamp = rospy.Time.now()
+        self.maneuver_path.poses.clear()
+        for i in range(len(path)):
+            point = PoseStamped()
+            point.pose.position.x = path[i][0]
+            point.pose.position.y = path[i][1]
+            self.maneuver_path.poses.append(point)
+
+        self.path_pub.publish(self.maneuver_path.poses)
+        self.optimization_success = res.success
+        opt_success = Bool()
+        opt_success.data = self.optimization_success
+        self.optimization_success_pub.publish(opt_success)
+
+        # TODO:
+        # If optimization was successful, publish the new target position for the A* algorithm (you will want to make this a separate "goal" value distinct from the roll target position)
+        if (self.optimization_success):
+            rospy.set_param("/control_panel_node/goal_x", pose_s.x)
+            rospy.set_param("/control_panel_node/goal_y", pose_s.y)
+
+
+    def occupancyGridCallback(msg):
+        '''
+        Callback function for the OccupancyGrid created by the mapping node. Sets the member variable 'self.obstacles' as a vector of points representing the presence of obstacles on the map.
+
+        Args:
+        -----
+        msg: nav_msgs/OccupancyGrid message
+
+        Returns:
+        None
+        '''
+        self.obstacles = gridMapToObstacles(msg)
