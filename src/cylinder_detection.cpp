@@ -67,6 +67,8 @@ private:
     std::string camera_name;
     std::string camera_frame;
     std::string target_frame;
+    std::string right_rotation_frame;
+    std::string left_rotation_frame;
 
     //===== Tuning Paramters
     float max_distance_x; // m
@@ -81,6 +83,10 @@ private:
     float min_fixed_y; // m
     float filter_z_low; // m
     float filter_z_high; // m
+    float theta_min; // r
+    float theta_max; // r
+    float phi_min; // r
+    float phi_max; // r
     double resolution; // pixels/m, 256 approx. = 1280 pixels / 5 m
     double rotation_resolution; // radians/section
     double circle_radius; // m
@@ -121,6 +127,9 @@ private:
     pcl::PointCloud<PointT>::Ptr scene_cloud_optical_frame;
     pcl::PointCloud<PointT>::Ptr scene_cloud_unfiltered;
     pcl::PointCloud<PointT>::Ptr scene_cloud;
+    pcl::PointCloud<PointT>::Ptr scene_cloud_right_adjustment_frame;
+    pcl::PointCloud<PointT>::Ptr scene_cloud_left_adjustment_frame;
+    pcl::PointCloud<PointT>::Ptr scene_cloud_z_filter_frame;
     Eigen::Vector3f translation;
     Eigen::Quaternionf rotation;
     Eigen::Affine3f affine_transform;
@@ -140,13 +149,16 @@ public:
     nh_("~"),
     scene_cloud_optical_frame(new pcl::PointCloud<PointT>),
     scene_cloud_unfiltered(new pcl::PointCloud<PointT>),
+    scene_cloud_right_adjustment_frame(new pcl::PointCloud<PointT>),
+    scene_cloud_left_adjustment_frame(new pcl::PointCloud<PointT>),
+    scene_cloud_z_filter_frame(new pcl::PointCloud<PointT>),
     scene_cloud(new pcl::PointCloud<PointT>),
     translation(0, 0, 0),
     rotation(1, 0, 0, 0) // w, x, y, z
     {
         // Load Parameters
         nh_.param<std::string>("camera", camera_name, "camera");
-        camera_frame = camera_name + "_link";
+        nh_.param<std::string>("pointcloud_frame", camera_frame, camera_name + "_link");
         nh_.param<std::string>("target_frame", target_frame, camera_frame);
         nh_.param<double>("target_x", target_point.x, 1.0);
         nh_.param<double>("target_y", target_point.y, 0.0);
@@ -227,6 +239,76 @@ public:
         pass.setInputCloud(scene_cloud_unfiltered);
         pass.setFilterFieldName("z");
         pass.setFilterLimits(filter_z_low, filter_z_high);
+
+        pass.filter(*scene_cloud_z_filter_frame);
+
+        // PERFORM TRANSFORM FOR RIGHT ROTATION
+        // Transform frame to minimum view angle in order to remove all points in the negative x range
+        // Degrees are first variable of thetas. modify for desired angles of view off of center line
+        theta_min = 15.0 * (M_PI/180.0); // convert degrees to radians
+        theta_max = 50.0 * (M_PI/180.0); // convert degrees to radians
+        phi_min = (M_PI/2) - theta_min;
+        phi_max = (M_PI/2) - theta_max;
+
+        translation.x() = 0.0;
+        translation.y() = 0.0;
+        translation.z() = 0.0;
+
+        rotation = Eigen::AngleAxisf(-1*phi_min, Eigen::Vector3f::UnitZ());
+
+        pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, rotation);
+
+        // Filter all points to the right of minimum view angle
+        pass.setInputCloud(scene_cloud_right_adjustment_frame);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(0.0, 120.0);
+
+        //pcl::copyPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud);
+
+        pass.filter(*scene_cloud_right_adjustment_frame);
+
+        // PERFORM TRANSFORM FOR LEFT ROTATION
+        // Transform frame to maximum view angle in order to remove all points in the negative x range
+        translation.x() = 0.0;
+        translation.y() = 0.0;
+        translation.z() = 0.0;
+
+        rotation = Eigen::AngleAxisf((phi_min+phi_max), Eigen::Vector3f::UnitZ());
+
+        pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, rotation);
+
+        // Filter all points to the left of minimum view angle
+        pass.setInputCloud(scene_cloud_left_adjustment_frame);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(0.0, 120.0);
+
+        pass.filter(*scene_cloud_left_adjustment_frame);
+
+        //PERFORM TRANSFROM TO ORIGINAL VIEW ORIENTATION
+        // Transform frame back to original orientation to put in center of remaining view window
+        translation.x() = 0.0;
+        translation.y() = 0.0;
+        translation.z() = 0.0;
+
+        rotation = Eigen::AngleAxisf(-1*phi_max, Eigen::Vector3f::UnitZ());
+
+        pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+        /*
+        // Debug
+        translation.x() = 0.0;
+        translation.y() = 0.0;
+        translation.z() = 0.0;
+
+        rotation = Eigen::AngleAxisf(phi_min, Eigen::Vector3f::UnitZ());
+
+        pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+        //scene_cloud->header.frame_id = camera_frame;
+        */
+        // Unnecessary filter required to apply transform????
+        pass.setInputCloud(scene_cloud);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(-120.0, 120.0);
+
         pass.filter(*scene_cloud);
 
         // DEBUG: Publish filtered pointcloud
@@ -321,7 +403,7 @@ public:
         //----- Hough Transform Iteration
         generateAccumulatorUsingImage(top_image_contours, accumulator);
         // generateAccumulatorUsingImage_OldMethod(top_image_contours, accumulator);
-
+typedef int MyCustomType;
         // DEBUG: get the top cylinder position for drawing a circle on the image for debuggin
         // Scale accumulator matrix for better visualization
         double accum_max;
