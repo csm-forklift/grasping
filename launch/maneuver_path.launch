@@ -8,5 +8,7 @@
         <remap from="/map" to="test_map_generator/map" />
     </node>
 
-    <node pkg="motion_testing" type="test_map_generator.py" name="test_map_generator" />
+    <node pkg="motion_testing" type="test_map_generator.py" name="test_map_generator">
+        <remap from="/test_map_generator/target" to="/roll/pose" />
+    </node>
 </launch>

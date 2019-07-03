@@ -59,17 +59,18 @@ class ManeuverPath:
         #=============#
         # ROS Parameters
         rospy.init_node("maneuver_path")
-        self.target_x = rospy.get_param("/target_x", 0.0)
-        self.target_y = rospy.get_param("/target_y", 0.0)
-        self.target_approach_angle = rospy.get_param("/target_approach_angle", 0.0)
-        self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 10.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
+        self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 3.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
 
         # ROS Publishers and Subscribers
         self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid, self.occupancyGridCallback, queue_size=1)
         self.perform_optimization_sub = rospy.Subscriber("~perform_optimization", Bool, self.optimizeManeuver, queue_size=3)
+        self.roll_pose_sub = rospy.Subscriber("/roll/pose", PoseStamped, self.rollCallback, queue_size=3)
         self.path_pub = rospy.Publisher("~path", Path, queue_size=3)
         self.optimization_success_pub = rospy.Publisher("~optimization_success", Bool, queue_size=3) # indicates whether the optimzation completed successfully or not, to know whether the path is usable
 
+        self.target_x = None
+        self.target_y = None
+        self.target_approach_angle = None
         self.obstacles = None
         self.maneuver_path = Path()
         self.maneuver_path.header.frame_id = "/odom"
@@ -537,82 +538,85 @@ class ManeuverPath:
         --------
         path: the optimal path as a ROS nav_msgs/Path message
         '''
-        # Get current roll target
-        self.target_x = rospy.get_param("/target_x", self.target_x)
-        self.target_y = rospy.get_param("/target_y", self.target_y)
-        self.target_approach_angle = rospy.get_param("/target_approach_angle", self.target_approach_angle)
+        # Make sure a target pose exists
+        if (self.target_x is not None):
+            # Set initial guess
+            x_s = self.target_x + np.cos(self.target_approach_angle)
+            y_s = self.target_y + np.sin(self.target_approach_angle)
+            theta_s = self.target_approach_angle # the starting pose is facing backwards, so the approach angle is the same as the starting orientation rather than adding 180deg
+            r_1 = 2
+            alpha_1 = -np.pi/2
+            r_2 = 2
+            alpha_2 = np.pi/2
+            x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
 
-        # Set initial guess
-        x_s = self.target_x + np.cos(self.target_approach_angle)
-        y_s = self.target_y + np.sin(self.target_approach_angle)
-        theta_s = self.target_approach_angle # the starting pose is facing backwards, so the approach angle is the same as the starting orientation rather than adding 180deg
-        r_1 = 2
-        alpha_1 = -np.pi/2
-        r_2 = 2
-        alpha_2 = np.pi/2
-        x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
+            # Set params
+            params = {"approach_point" : [17,17], "current_pose" : [1,1,-3*np.pi/4], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
 
-        # Set params
-        params = {"approach_point" : [17,17], "current_pose" : [1,1,-3*np.pi/4], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
+            # Set up optimization problem
+            obj = lambda x: self.maneuverObjective(x, params)
+            ineq_con = {'type': 'ineq',
+                        'fun' : lambda x: self.maneuverIneqConstraints(x, params),
+                        'jac' : None}
+            bounds = [(None, None),
+                      (None, None),
+                      (-np.pi, np.pi),
+                      (None, None),
+                      (-2*np.pi, 2*np.pi),
+                      (self.min_radius, None),
+                      (0, 2*np.pi)]
 
-        # Set up optimization problem
-        obj = lambda x: self.maneuverObjective(x, params)
-        ineq_con = {'type': 'ineq',
-                    'fun' : lambda x: self.maneuverIneqConstraints(x, params),
-                    'jac' : None}
-        bounds = [(None, None),
-                  (None, None),
-                  (-np.pi, np.pi),
-                  (None, None),
-                  (-2*np.pi, 2*np.pi),
-                  (self.min_radius, None),
-                  (0, 2*np.pi)]
+            # Optimize
+            res = minimize(obj, x0, method='SLSQP', bounds=bounds, constraints=ineq_con)
 
-        # Optimize
-        res = minimize(obj, x0, method='SLSQP', bounds=bounds, constraints=ineq_con)
+            # Store result
+            x_s = res.x[0]
+            y_s = res.x[1]
+            theta_s = res.x[2]
+            r_1 = res.x[3]
+            alpha_1 = res.x[4]
+            r_2 = res.x[5]
+            alpha_2 = res.x[6]
 
-        # Store result
-        x_s = res.x[0]
-        y_s = res.x[1]
-        theta_s = res.x[2]
-        r_1 = res.x[3]
-        alpha_1 = res.x[4]
-        r_2 = res.x[5]
-        alpha_2 = res.x[6]
+            # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
+            r_2 = -np.sign(r_1)*r_2
+            alpha_2 = -np.sign(alpha_1)*alpha_2
 
-        # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
-        r_2 = -np.sign(r_1)*r_2
-        alpha_2 = -np.sign(alpha_1)*alpha_2
+            pose_s = Pose2D(x_s, y_s, theta_s)
+            [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
 
-        pose_s = Pose2D(x_s, y_s, theta_s)
-        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
+            path = self.maneuverSegmentPath(pose_s, r_1, alpha_1)
+            path.extend(self.maneuverSegmentPath(pose_m, r_2, alpha_2))
+            self.maneuver_path.header.stamp = rospy.Time.now()
+            self.maneuver_path.poses = []
+            for i in range(len(path)):
+                point = PoseStamped()
+                point.pose.position.x = path[i][0]
+                point.pose.position.y = path[i][1]
+                self.maneuver_path.poses.append(point)
 
-        path = self.maneuverSegmentPath(pose_s, r_1, alpha_1)
-        path.extend(self.maneuverSegmentPath(pose_m, r_2, alpha_2))
-        self.maneuver_path.header.stamp = rospy.Time.now()
-        self.maneuver_path.poses = []
-        for i in range(len(path)):
-            point = PoseStamped()
-            point.pose.position.x = path[i][0]
-            point.pose.position.y = path[i][1]
-            self.maneuver_path.poses.append(point)
+            self.path_pub.publish(self.maneuver_path)
+            self.optimization_success = res.success
+            opt_success = Bool()
+            opt_success.data = self.optimization_success
+            self.optimization_success_pub.publish(opt_success)
 
-        self.path_pub.publish(self.maneuver_path)
-        self.optimization_success = res.success
-        opt_success = Bool()
-        opt_success.data = self.optimization_success
-        self.optimization_success_pub.publish(opt_success)
-
-        # TODO:
-        # If optimization was successful, publish the new target position for the A* algorithm (you will want to make this a separate "goal" value distinct from the roll target position)
-        if (self.optimization_success):
-            rospy.set_param("/control_panel_node/goal_x", pose_s.x)
-            rospy.set_param("/control_panel_node/goal_y", pose_s.y)
+            # TODO:
+            # If optimization was successful, publish the new target position for the A* algorithm (you will want to make this a separate "goal" value distinct from the roll target position)
+            if (self.optimization_success):
+                rospy.set_param("/control_panel_node/goal_x", float(pose_s.x))
+                rospy.set_param("/control_panel_node/goal_y", float(pose_s.y))
+        else:
+            opt_success = Bool()
+            opt_success.data = False
+            self.optimization_success_pub.publish(opt_success)
 
 
     def occupancyGridCallback(self, msg):
         '''
-        Callback function for the OccupancyGrid created by the mapping node. Sets the member variable 'self.obstacles' as a vector of points representing the presence of obstacles on the map.
+        Callback function for the OccupancyGrid created by the mapping node.
+        Sets the member variable 'self.obstacles' as a vector of points
+        representing the presence of obstacles on the map.
 
         Args:
         -----
@@ -622,6 +626,26 @@ class ManeuverPath:
         None
         '''
         self.obstacles = self.gridMapToObstacles(msg)
+
+    def rollCallback(self, msg):
+        '''
+        Reads in the rolls target pose. The (x,y) position are contained in the
+        pose.position variable and the yaw angle is contained int he
+        pose.orientation.z variable.
+
+        Args:
+        -----
+        msg: PoseStamped object containing the roll position in
+             msg.pose.position.x, msg.pose.position.y and the yaw angle in
+             msg.pose.orientation.z
+
+        Returns:
+        --------
+        None
+        '''
+        self.target_x = msg.pose.position.x
+        self.target_y = msg.pose.position.y
+        self.target_approach_angle = msg.pose.orientation.z
 
 
 if __name__ == "__main__":

@@ -143,7 +143,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/bspline_node.cpp)
-add_executable(bspline_path src/bspline.cpp)
+add_executable(approach_path src/approach_path.cpp)
 add_executable(test_points src/test_points.cpp)
 add_executable(clamp_switch_node src/clamp_switch_node.cpp)
 add_executable(cylinder_detection src/cylinder_detection.cpp)
@@ -162,7 +162,7 @@ add_executable(cylinder_detection src/cylinder_detection.cpp)
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
-target_link_libraries(bspline_path ${catkin_LIBRARIES})
+target_link_libraries(approach_path ${catkin_LIBRARIES})
 target_link_libraries(test_points ${catkin_LIBRARIES})
 target_link_libraries(clamp_switch_node ${catkin_LIBRARIES})
 target_link_libraries(cylinder_detection ${catkin_LIBRARIES})
