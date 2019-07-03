@@ -75,27 +75,10 @@ public:
         nh_.param<double>("/forklift/body/length", body_length, 2.5601);
         nh_.param<double>("/forklift/body/total", total_length, 3.5659);
         nh_.param<double>("/forklift/body/base_to_clamp", base_to_clamp, 1.0058);
-        nh_.param<double>("roll_radius", roll_radius, 0.20);
-
-        // Set up control points
-        m_control_points.push_back(Vector2d(1,1));
-        m_control_points.push_back(Vector2d(2,5));
-        m_control_points.push_back(Vector2d(4,7));
-        m_control_points.push_back(Vector2d(6,8));
-        m_control_points.push_back(Vector2d(10,9));
-        m_control_points.push_back(Vector2d(9,6));
-        m_control_points.push_back(Vector2d(8,4));
-        m_control_points.push_back(Vector2d(6,3));
-        m_control_points.push_back(Vector2d(5,2.5));
-        m_control_points.push_back(Vector2d(4,3));
+        nh_.param<double>("/roll/radius", roll_radius, 0.20);
 
         // Define ROS Objects
         pub_path = nh_.advertise<nav_msgs::Path>("path", 1);
-        // NOTE: the pose information from this message only contains the (x,y)
-        // location of the roll and the desired approach angle stored in the
-        // variable 'pose.pose.orientation.z'. The orientation is not an actual
-        // quaternion in this particular case.
-        cout << "[WARN]: The pose sent to the '/approach_path/roll/pose' topic constains the 2D position in (pose.pose.position.x, pose.pose.position.y) and the desired approach angle as (pose.pose.orientation.z)\n";
         sub_roll = nh_.subscribe("/roll/pose", 1, &GraspPath::rollCallback, this);
         sub_forklift = nh_.subscribe("/forklift/approach_pose", 1, &GraspPath::forkliftCallback, this);
 
@@ -129,9 +112,6 @@ public:
 
             updateControlPoints();
         }
-
-        constructVectors();
-        generatePath();
     }
 
     // De Boor's Algorithm Implementation
@@ -261,7 +241,7 @@ public:
          * considering the desired approach angle and stopping point. There are
          * four points placed coming out from the roll in the direction of the
          * approach angle. One on the roll surface. One a clamp's length away.
-         * Once two clamp's lengths away. And one a forklift length way from
+         * One two clamp's lengths away. And one a forklift length way from
          * the second point. This is so the baselink, which is the middle of
          * the front axle, will be roughly two clamp lengths away from the roll
          * while being aligned straight with the approach angle. This way the
@@ -274,7 +254,15 @@ public:
 
         double x_r = roll_pose.pose.position.x; // x location of roll
         double y_r = roll_pose.pose.position.y; // y location of roll
-        double alpha = roll_pose.pose.orientation.z; // approach angle
+        tf::Quaternion roll_q(
+            roll_pose.pose.orientation.x,
+            roll_pose.pose.orientation.y,
+            roll_pose.pose.orientation.z,
+            roll_pose.pose.orientation.w
+        );
+        double roll_r, pitch_r, alpha;
+        tf::Matrix3x3(roll_q).getRPY(roll_r, pitch_r, alpha);
+
         double x_f = forklift_pose.pose.position.x; // x location of forklift
         double y_f = forklift_pose.pose.position.y; // y location of forklift
 
