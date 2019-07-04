@@ -13,5 +13,7 @@
     </node>
     
     <node pkg="grasping" type="approach_path" name="approach_path" output="screen"/>
+    
+    <node pkg="motion_testing" type="path_handler.py" name="path_handler" output="screen" />
 
 </launch>

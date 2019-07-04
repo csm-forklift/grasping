@@ -9,8 +9,9 @@ starting point for the grasping path generation.
 
 
 import rospy
-from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Path, OccupancyGrid
+from geometry_msgs.msg import PoseStamped, Pose
+from grasping.srv import OptimizeManeuver, OptimizeManeuverRequest, OptimizeManeuverResponse
+from nav_msgs.msg import Path, OccupancyGrid, Odometry
 from std_msgs.msg import Bool
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 import numpy as np
@@ -89,6 +90,7 @@ class ManeuverPath:
         self.maneuver_path = Path()
         self.maneuver_path.header.frame_id = "/odom"
         self.optimization_success = False
+        self.current_pose = Pose()
         self.rate = rospy.Rate(30)
 
         # Forklift dimensions
@@ -135,18 +137,16 @@ class ManeuverPath:
 
         # ROS Publishers and Subscribers
         self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid, self.occupancyGridCallback, queue_size=1)
-        self.perform_optimization_sub = rospy.Subscriber("~perform_optimization", Bool, self.optimizeManeuver, queue_size=3)
         self.roll_pose_sub = rospy.Subscriber("/roll/pose", PoseStamped, self.rollCallback, queue_size=3)
+        self.odom_sub = rospy.Subscriber("/odom", Odometry, self.odomCallback, queue_size=1)
         self.path1_pub = rospy.Publisher("~path1", Path, queue_size=3)
         self.path2_pub = rospy.Publisher("~path2", Path, queue_size=3)
-        self.optimization_success_pub = rospy.Publisher("~optimization_success", Bool, queue_size=3) # indicates whether the optimzation completed successfully or not, to know whether the path is usable
         self.approach_pose_pub = rospy.Publisher("/forklift/approach_pose", PoseStamped, queue_size=3)
+        # indicates whether the optimzation completed successfully or not, to know whether the path is usable
+        self.optimize_maneuver_srv = rospy.Service("~optimize_maneuver", OptimizeManeuver, self.optimizeManeuver)
 
     def spin(self):
         while not rospy.is_shutdown():
-            opt_success = Bool()
-            opt_success = self.optimization_success
-            self.optimization_success_pub.publish(opt_success)
             self.rate.sleep()
 
     def maneuverPoses(self, pose_s, r_1, alpha_1, r_2, alpha_2):
@@ -551,7 +551,7 @@ class ManeuverPath:
 
         return C
 
-    def optimizeManeuver(self, msg):
+    def optimizeManeuver(self, req):
         '''
         Sets up the optimization problem then calculates the optimal maneuver
         poses. Runs when any message is sent to the corresponding subscriber,
@@ -600,7 +600,13 @@ class ManeuverPath:
             # Set params
             # TODO:
             # add the forklifts current pose from "/odom"
-            params = {"current_pose" : [0,0,0], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 0.1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
+            current_pose2D = Pose2D()
+            current_pose2D.x = self.current_pose.position.x
+            current_pose2D.y = self.current_pose.position.y
+            euler_angles = euler_from_quaternion([self.current_pose.orientation.x, self.current_pose.orientation.y, self.current_pose.orientation.z, self.current_pose.orientation.w])
+            current_pose2D.theta = euler_angles[2]
+
+            params = {"current_pose" : [current_pose2D.x,current_pose2D.y,current_pose2D.theta], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 0.1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
 
             # Set up optimization problem
             obj = lambda x: self.maneuverObjective(x, params)
@@ -622,8 +628,7 @@ class ManeuverPath:
             print("===== Optimization Results =====")
             print("Success: %s" % res.success)
             print("Message: %s" % res.message)
-            print("Results:")
-            print(res.x)
+            print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (res.x[0], res.x[1], res.x[2], res.x[3], res.x[4], res.x[5], res.x[6]))
 
             # Store result
             x_s = res.x[0]
@@ -663,9 +668,6 @@ class ManeuverPath:
             self.path2_pub.publish(self.maneuver_path)
 
             self.optimization_success = res.success
-            opt_success = Bool()
-            opt_success.data = self.optimization_success
-            self.optimization_success_pub.publish(opt_success)
 
             if (self.optimization_success):
                 # If optimization was successful, publish the new target
@@ -675,22 +677,22 @@ class ManeuverPath:
                 rospy.set_param("/control_panel_node/goal_y", float(pose_s.y))
 
                 # Publish the starting pose for the approach b-spline path
-                forklift_pose = PoseStamped()
-                forklift_pose.header.frame_id = "/odom"
-                forklift_pose.pose.position.x = pose_f.x
-                forklift_pose.pose.position.y = pose_f.y
+                obstacle_end_pose = PoseStamped()
+                obstacle_end_pose.header.frame_id = "/odom"
+                obstacle_end_pose.pose.position.x = pose_f.x
+                obstacle_end_pose.pose.position.y = pose_f.y
                 quat_forklift = quaternion_from_euler(0, 0, wrapToPi(pose_f.theta))
-                forklift_pose.pose.orientation.x = quat_forklift[0]
-                forklift_pose.pose.orientation.y = quat_forklift[1]
-                forklift_pose.pose.orientation.z = quat_forklift[2]
-                forklift_pose.pose.orientation.w = quat_forklift[3]
+                obstacle_end_pose.pose.orientation.x = quat_forklift[0]
+                obstacle_end_pose.pose.orientation.y = quat_forklift[1]
+                obstacle_end_pose.pose.orientation.z = quat_forklift[2]
+                obstacle_end_pose.pose.orientation.w = quat_forklift[3]
 
-                self.approach_pose_pub.publish(forklift_pose)
+                self.approach_pose_pub.publish(obstacle_end_pose)
+
+            return OptimizeManeuverResponse(self.optimization_success)
 
         else:
-            opt_success = Bool()
-            opt_success.data = False
-            self.optimization_success_pub.publish(opt_success)
+            return OptimizeManeuverResponse(False)
 
 
     def occupancyGridCallback(self, msg):
@@ -728,6 +730,20 @@ class ManeuverPath:
         self.target_y = msg.pose.position.y
         euler_angles = euler_from_quaternion([msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w])
         self.target_approach_angle = euler_angles[2]
+
+    def odomCallback(self, msg):
+        '''
+        Stores the forklift's current pose from odometry data.
+
+        Args:
+        -----
+        msg: nav_msgs/Odometry object
+
+        Returns:
+        --------
+        None
+        '''
+        self.current_pose = msg.pose.pose
 
 if __name__ == "__main__":
     try:
