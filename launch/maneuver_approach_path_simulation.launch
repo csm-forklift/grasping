@@ -32,7 +32,7 @@
     <!--=========================-->
     <!-- Maneuver Path Generator -->
     <!--=========================-->
-    <node pkg="grasping" type="maneuver_path.py" name="maneuver_path" output="screen">
+    <node pkg="grasping" type="maneuver_path.py" name="maneuver_path">
         <remap from="/maneuver_path/path1" to="/maneuver_path1"/>
         <remap from="/maneuver_path/path2" to="/maneuver_path2"/>
     </node>
@@ -40,14 +40,16 @@
     <!--=========================-->
     <!-- Approach Path Generator -->
     <!--=========================-->
-    <node pkg="grasping" type="approach_path" name="approach_path" output="screen"/>
+    <node pkg="grasping" type="approach_path" name="approach_path">
+        <remap from="/approach_path/path" to="/approach_path"/>
+    </node>
     
     <!--======================-->
     <!-- Velocity Controllers -->
     <!--======================-->
     <node pkg="robust_navigation" type="velocity_controller_forward" name="velocity_controller_forward" respawn="true"/>
-    <node pkg="robust_navigation" type="velocity_controller_reverse" name="velocity_controller_reverse" respawn="true" output="screen"/>
-    <node pkg="sensors" type="velocity_conversion" name="velocity_conversion">
+    <node pkg="robust_navigation" type="velocity_controller_reverse" name="velocity_controller_reverse" respawn="true"/>
+    <node pkg="sensors" type="velocity_conversion" name="velocity_conversion" output="screen">
         <param name="use_covariance" value="false"/>
         <remap from="/velocity_node/velocity" to="/controls/velocity_setpoint"/>
         <remap from="/steering_node/filtered_angle" to="/controls/angle_setpoint"/>

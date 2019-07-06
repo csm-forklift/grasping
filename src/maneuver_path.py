@@ -11,6 +11,7 @@ starting point for the grasping path generation.
 import rospy
 from geometry_msgs.msg import PoseStamped, Pose
 from grasping.srv import OptimizeManeuver, OptimizeManeuverRequest, OptimizeManeuverResponse
+from motion_testing.msg import PathWithGear
 from nav_msgs.msg import Path, OccupancyGrid, Odometry
 from std_msgs.msg import Bool
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
@@ -87,8 +88,8 @@ class ManeuverPath:
         self.target_y = None
         self.target_approach_angle = None
         self.obstacles = None
-        self.maneuver_path = Path()
-        self.maneuver_path.header.frame_id = "/odom"
+        self.maneuver_path = PathWithGear()
+        self.maneuver_path.path.header.frame_id = "/odom"
         self.optimization_success = False
         self.current_pose = Pose()
         self.rate = rospy.Rate(30)
@@ -139,8 +140,8 @@ class ManeuverPath:
         self.occupancy_grid_sub = rospy.Subscriber("/map", OccupancyGrid, self.occupancyGridCallback, queue_size=1)
         self.roll_pose_sub = rospy.Subscriber("/roll/pose", PoseStamped, self.rollCallback, queue_size=3)
         self.odom_sub = rospy.Subscriber("/odom", Odometry, self.odomCallback, queue_size=1)
-        self.path1_pub = rospy.Publisher("~path1", Path, queue_size=3)
-        self.path2_pub = rospy.Publisher("~path2", Path, queue_size=3)
+        self.path1_pub = rospy.Publisher("~path1", PathWithGear, queue_size=3)
+        self.path2_pub = rospy.Publisher("~path2", PathWithGear, queue_size=3)
         self.approach_pose_pub = rospy.Publisher("/forklift/approach_pose", PoseStamped, queue_size=3)
         # indicates whether the optimzation completed successfully or not, to know whether the path is usable
         self.optimize_maneuver_srv = rospy.Service("~optimize_maneuver", OptimizeManeuver, self.optimizeManeuver)
@@ -648,23 +649,27 @@ class ManeuverPath:
 
             # Publish first segment of maneuver
             path1 = self.maneuverSegmentPath(pose_s, r_1, alpha_1)
-            self.maneuver_path.header.stamp = rospy.Time.now()
-            self.maneuver_path.poses = []
+            self.maneuver_path.path.header.stamp = rospy.Time.now()
+            self.maneuver_path.path.poses = []
             for i in range(len(path1)):
                 point = PoseStamped()
                 point.pose.position.x = path1[i][0]
                 point.pose.position.y = path1[i][1]
-                self.maneuver_path.poses.append(point)
+                self.maneuver_path.path.poses.append(point)
+                # Set gear, positive alpha = forward gear
+                self.maneuver_path.gear = np.sign(alpha_1)
             self.path1_pub.publish(self.maneuver_path)
 
             # Publish second segment of maneuver
             path2 = self.maneuverSegmentPath(pose_m, r_2, alpha_2)
-            self.maneuver_path.poses = []
+            self.maneuver_path.path.poses = []
             for i in range(len(path2)):
                 point = PoseStamped()
                 point.pose.position.x = path2[i][0]
                 point.pose.position.y = path2[i][1]
-                self.maneuver_path.poses.append(point)
+                self.maneuver_path.path.poses.append(point)
+                # Set gear, positive alpha = forward gear
+                self.maneuver_path.gear = np.sign(alpha_2)
             self.path2_pub.publish(self.maneuver_path)
 
             self.optimization_success = res.success
