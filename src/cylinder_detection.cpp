@@ -31,6 +31,7 @@
 #include <string>
 #include <math.h>
 #include <limits.h>
+#include <sys/time.h>
 #include <ros/ros.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/PointStamped.h>
@@ -98,13 +99,15 @@ private:
     double bound_offset; // determines the radial bound inside which the circle points will be considered for calculating the variance
     double upper_radius; // upper radius calculated using the bound_offset
     double lower_radius; // lower radius calculated using the bound offset
-
     //===== Filtering Options
     bool use_threshold_filter; // set to true to perform filtering using the accumulator low and high thresholds
     bool check_center_points; // set to true to remove potential locations which contain points within the cylinder surface
     bool use_variance_filter; // filters points based off the variance calculated using points within the vicinity of the expected circle
     bool use_location_filter; // Rejects all points which do not lie near the desired goal location (this should return only one point at most)
-
+    int num_of_points_in_filter =1; // For memory update points, need to start at 1 since we have a temp target point
+    std::vector<double> points_x;
+    std::vector<double> points_y;
+    double sigma_squared_x =1, sigma_squared_y=1;
     //===== Range and Resolution Data
     PointT min_pt; // minimum point in pointcloud
     PointT max_pt; // maximum point in pointcloud
@@ -116,6 +119,11 @@ private:
     float z_min;
     double x_range; // range for x data
     double y_range; // range for y data
+    double sigma_squared;
+    double mahalanobisDistance;
+    double mahalanobisDistanceThreshold;
+    double intervalTimeCount;
+    double currentWallTime;
     int x_pixels; // x resolution for image
     int y_pixels; // y resolution for image
     float x_pixel_delta; // length of each pixel in image frame 'x' direction
@@ -192,6 +200,10 @@ public:
         max_fixed_y = 2.5; // m
         min_fixed_y = -2.5; // m
 
+        // Set Filter Parameters
+        sigma_squared = 1.0;
+        intervalTimeCount = 0.0;
+
         // Filter pointcloud height
         filter_z_low = -0.100; // m
         filter_z_high = 0.500; // m
@@ -213,7 +225,7 @@ public:
         use_threshold_filter = true;
         check_center_points = true;
         use_variance_filter = true;
-        use_location_filter = true;
+        use_location_filter = false;
         //=============================//
     }
 
@@ -450,10 +462,17 @@ typedef int MyCustomType;
             checkCenterPoints(potentials, top_image);
         }
 
+        std::vector<double> variances_out(potentials.size(), 0);
         // Filter potentials based on variance of points around circle
         if (use_variance_filter) {
             std::vector<double> variances(potentials.size(), 0);
+
             varianceFilter(potentials, variances, top_image);
+            // cout << "\n";
+            // for (int j = 0; j < variances.size(); j++) {
+            //     cout << "Variances (index, value): " << j << " " << variances.at(j) << "\n";
+            // }
+            // cout << "\n";
 
             // DEBUG: write variances to file
             std::ofstream out_file;
@@ -468,13 +487,138 @@ typedef int MyCustomType;
                 }
             }
             out_file.close();
-        }
+            variances_out = variances;
 
+        }
+       // cout << "After Variance: " << potentials.size() << '\n';
         // Find the point closest to the desired target
         // Will only return the single closest point within range (otherwise no points returned)
         if (use_location_filter) {
             targetFilter(potentials, target_point);
         }
+        //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
+        //cout << '\n';
+
+
+        // Memory filter! Mahalnobris Distance Filter/ XXX Filtering thingy
+        float camera_frame_x;
+        float camera_frame_y;
+
+        for (int i = 0; i < potentials.size(); ++i) {
+            // Convert from image pixels(potentials) to meters(camera_frame)
+            imageToCamera(potentials.at(i).x, potentials.at(i).y, camera_frame_x, camera_frame_y);
+            // Need a different variance measurement!
+            // We want to have 3 standard deviations form the center as the threshold maybe. So we need to 3
+
+            currentWallTime = getWallTime();
+            mahalanobisDistanceThreshold = 3*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y)) * ceil((currentWallTime-intervalTimeCount)/5.0) * exp(ceil((currentWallTime-intervalTimeCount)/0.5));
+            //mahalanobisDistanceThreshold = 3.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
+
+            // Calculate the mahalanobis distance using previous sigmas and target point values
+            mahalanobisDistance = sqrt(pow(camera_frame_x-target_point.x,2)/sigma_squared_x + pow(camera_frame_y-target_point.y,2)/sigma_squared_y);
+            cout << "\n";
+            cout << "Wall time: " << currentWallTime << "\n";
+            cout << "Wall Time - Interval Time: " << currentWallTime-intervalTimeCount << "\n";
+            cout << "Multiplier: " << ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
+            cout << "Exponential Multiplier: " << exp(ceil((currentWallTime-intervalTimeCount)/5.0)) << "\n";
+            cout << "Multiplier total: " << exp(ceil((currentWallTime-intervalTimeCount)/0.5))*ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
+            cout << "Threshold: " << mahalanobisDistanceThreshold << "\n";
+            cout << "Distance: " << mahalanobisDistance << "\n";
+
+            if (mahalanobisDistance < mahalanobisDistanceThreshold) {
+
+                // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
+                // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
+                num_of_points_in_filter++;
+
+                points_x.push_back(camera_frame_x);
+                points_y.push_back(camera_frame_y);
+                double sum_x = target_point.x;
+                double sum_y = target_point.y;
+                for(int k=0; k<points_x.size();k++){
+                    sum_x += points_x[k]; 
+                    sum_y += points_y[k]; 
+                }
+                double mean_x = sum_x/num_of_points_in_filter;
+                double mean_y = sum_y/num_of_points_in_filter;
+                double point_var_x = 0;
+                double point_var_y = 0;
+                for(int k =0; k<points_x.size(); k++){
+                    point_var_x += (points_x[k]-mean_x)*(points_x[k]-mean_x);
+                    point_var_y += (points_y[k]-mean_y)*(points_y[k]-mean_y);
+                }
+                point_var_x /= num_of_points_in_filter;
+                point_var_y /= num_of_points_in_filter;
+
+                // Calculate new target point x value and sigma
+                target_point.x = (sigma_squared_x*camera_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+                
+                // Calculate new target point y value
+                target_point.y = (sigma_squared_y*camera_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+
+                //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
+                //if (variances_out.at(i) > 10^(-9)) {
+                //    sigma_squared = (variances_out.at(i)*sigma_squared) / (variances_out.at(i) + sigma_squared);
+                //} else {
+                //    sigma_squared = sigma_squared;
+                //}
+
+                intervalTimeCount = getWallTime();
+
+                cout << "\n";
+                cout << num_of_points_in_filter << '\n';
+                cout << "Roll Point x,y: " << camera_frame_x << ", " << camera_frame_y << "\n";
+                cout << "Target Point X,Y: " << target_point.x << ", " << target_point.y << "\n";
+                cout << "XXX Distance: " << mahalanobisDistance << "\n";
+                cout << "XXX Threshold: " << mahalanobisDistanceThreshold << "\n";
+                cout << "current sigma_squared_x: " << sigma_squared_x << '\n';
+                cout << "current sigma_squared_y: " << sigma_squared_y << '\n';
+                cout << "Target Point X: " << target_point.x << "\n";
+                cout << "Target Point Y: " << target_point.y << "\n";
+                // imageToCamera(target_point.x, target_point.y, camera_frame_x, camera_frame_y);
+                geometry_msgs::PointStamped cylinder_point;
+                cylinder_point.header = msg.header;
+                cylinder_point.header.frame_id = camera_frame.c_str();
+                cylinder_point.point.x = target_point.x;
+                cylinder_point.point.y = target_point.y;
+                cylinder_point.point.z = 0;
+                cyl_pub.publish(cylinder_point);
+
+                 visualization_msgs::MarkerArray cyl_markers;
+                // Delete previous markers
+                visualization_msgs::Marker delete_markers;
+                delete_markers.action = visualization_msgs::Marker::DELETEALL;
+                cyl_markers.markers.push_back(delete_markers);
+                // DEBUG: Show cylinder marker
+                // imageToCamera(target_point.x, target_point.y, camera_frame_x, camera_frame_y);
+                visualization_msgs::Marker cyl_marker;
+                cyl_marker.header = msg.header;
+                cyl_marker.header.frame_id = camera_frame.c_str();
+                cyl_marker.id = 1;
+                cyl_marker.type = visualization_msgs::Marker::CYLINDER;
+                cyl_marker.pose.position.x = target_point.x;
+                cyl_marker.pose.position.y = target_point.y;
+                cyl_marker.pose.position.z = 0;
+                cyl_marker.pose.orientation.x = 0;
+                cyl_marker.pose.orientation.y = 0;
+                cyl_marker.pose.orientation.z = 0;
+                cyl_marker.pose.orientation.w = 1.0;
+                cyl_marker.scale.x = 0.75*(2*circle_radius);
+                cyl_marker.scale.y = 0.75*(2*circle_radius);
+                cyl_marker.scale.z = 1.0;
+                cyl_marker.color.a = 1.0;
+                cyl_marker.color.r = 1.0;
+                cyl_marker.color.g = 1.0;
+                cyl_marker.color.b = 1.0;
+                cyl_marker.lifetime = ros::Duration(1/100);
+                cyl_markers.markers.push_back(cyl_marker);
+                marker_pub.publish(cyl_markers);
+
+            }
+        }
+            
 
         // // DEBUG: Hightlight the max point with a circle
         // cv::Mat top_image_rgb;
@@ -513,8 +657,8 @@ typedef int MyCustomType;
         //==================================//
 
         //===== Convert Point Back to Camera Frame and Publish =====//
-        float camera_frame_x;
-        float camera_frame_y;
+        //float camera_frame_x;
+        //float camera_frame_y;
 
         if (!potentials.empty()) {
             imageToCamera(potentials.at(0).x, potentials.at(0).y, camera_frame_x, camera_frame_y);
@@ -524,7 +668,7 @@ typedef int MyCustomType;
             cylinder_point.point.x = camera_frame_x;
             cylinder_point.point.y = camera_frame_y;
             cylinder_point.point.z = 0;
-            cyl_pub.publish(cylinder_point);
+          //  cyl_pub.publish(cylinder_point);
         }
 
         // Create a marker for cylinder visualization in RVIZ
@@ -559,7 +703,7 @@ typedef int MyCustomType;
             cyl_markers.markers.push_back(cyl_marker);
         }
 
-        marker_pub.publish(cyl_markers);
+       // marker_pub.publish(cyl_markers);
         //==========================================================//
     }
 
@@ -1158,7 +1302,6 @@ typedef int MyCustomType;
         }
 
         std::vector<int> var_n(points.size(), 0); // stores the number of points being summed in the variance
-
         // Iterate through each point in top_image (i = x pixel, j = y pixel)
         for (int i = 0; i < top_image.cols; ++i) {
             for (int j = 0; j < top_image.rows; ++j) {
@@ -1193,17 +1336,23 @@ typedef int MyCustomType;
             // This equation calculates a tolerance based on distance from the camera. It was derived empirically. This assumes the target frame is the camera frame.
             double x,y;
             imageToCamera(points.at(i).x, points.at(i).y, x, y);
+
+
             double distance = sqrt(pow(x,2) + pow(y,2));
-            variance_tolerance = 0.0003*distance + 0.0001;
+            // variance_tolerance = 0.0003*distance + 0.0001;
+            variance_tolerance = 0.3*distance + 0.1;
+
             if (variances.at(i) > variance_tolerance) {
                 to_remove.push_back(i);
             }
         }
 
+
         // Now remove the points that are less than the threshold
         for (int i = to_remove.size() - 1; i >= 0; --i) {
             points.erase(points.begin() + to_remove.at(i));
         }
+
     }
 
     double calculateRadius(double x, double y, double x_c, double y_c)
@@ -1235,18 +1384,25 @@ typedef int MyCustomType;
             //cameraToTarget(potential_x_camera, potential_y_camera, potential_x, potential_y);
 
             // Find minimum distance from target
+
             double distance_sq = pow(potential_x - target_cam_x, 2) + pow(potential_y - target_cam_y, 2);
             if (distance_sq < min_distance_sq) {
                 min_distance_sq = distance_sq;
                 closest_point.x = points.at(i).x;
                 closest_point.y = points.at(i).y;
             }
+
+
+
+
         }
 
         // Clear all the points
         points.clear();
 
         // Check if minimum distance is within range, if so store that point, if not leave the points vector empty
+        cout << "Min dist: " << min_distance_sq <<'\n';
+        target_tolerance = 1.5;
         if (min_distance_sq < pow(target_tolerance, 2)) {
             points.push_back(closest_point);
         }
@@ -1395,6 +1551,15 @@ typedef int MyCustomType;
         // std::cout << "Target point (" << camera_frame << ")\n";
         // std::cout << "(" << camera_x_out << ", " << camera_y_out << ")" << std::endl;
     }
+
+    double getWallTime() {
+        struct timeval time;
+        if (gettimeofday(&time, NULL)) {
+            return 0;
+        }
+        return (double)time.tv_sec + (double)time.tv_usec*0.000001;
+    }
+
 };
 
 
