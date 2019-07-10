@@ -65,8 +65,8 @@ private:
     ros::Publisher marker_pub; // publish cylinder marker
     ros::Publisher pc_debug_pub; // publish filtered pointcloud for debugging
     tf::TransformListener tf_listener;
-    std::string camera_name;
-    std::string camera_frame;
+    std::string sensor_name;
+    std::string sensor_frame;
     std::string target_frame;
     std::string right_rotation_frame;
     std::string left_rotation_frame;
@@ -99,15 +99,17 @@ private:
     double bound_offset; // determines the radial bound inside which the circle points will be considered for calculating the variance
     double upper_radius; // upper radius calculated using the bound_offset
     double lower_radius; // lower radius calculated using the bound offset
+
     //===== Filtering Options
     bool use_threshold_filter; // set to true to perform filtering using the accumulator low and high thresholds
     bool check_center_points; // set to true to remove potential locations which contain points within the cylinder surface
     bool use_variance_filter; // filters points based off the variance calculated using points within the vicinity of the expected circle
     bool use_location_filter; // Rejects all points which do not lie near the desired goal location (this should return only one point at most)
     int num_of_points_in_filter =1; // For memory update points, need to start at 1 since we have a temp target point
-    std::vector<double> points_x;
-    std::vector<double> points_y;
+    std::vector<double> prior_points_x; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
+    std::vector<double> prior_points_y; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     double sigma_squared_x =1, sigma_squared_y=1;
+
     //===== Range and Resolution Data
     PointT min_pt; // minimum point in pointcloud
     PointT max_pt; // maximum point in pointcloud
@@ -128,8 +130,8 @@ private:
     int y_pixels; // y resolution for image
     float x_pixel_delta; // length of each pixel in image frame 'x' direction
     float y_pixel_delta; // length of each pixel in image frame 'y' direction
-    float y_mirror_min; // y minimum in camera frame mirrored about x axis
-    float y_mirror_max; // y maximum in camera frame mirrored about x axis
+    float y_mirror_min; // y minimum in sensor frame mirrored about x axis
+    float y_mirror_max; // y maximum in sensor frame mirrored about x axis
     int radius_pixels; // number of pixels in the circle radius (based on resolution)
     int accum_x_pixels; // number of pixels in x dimension of accumulator matrix
     int accum_y_pixels; // number of pixels in y dimension of accumulator matrix
@@ -168,27 +170,27 @@ public:
     rotation(1, 0, 0, 0) // w, x, y, z
     {
         // Load Parameters
-        nh_.param<std::string>("camera", camera_name, "camera");
-        nh_.param<std::string>("pointcloud_frame", camera_frame, camera_name + "_link");
-        nh_.param<std::string>("target_frame", target_frame, camera_frame);
+        nh_.param<std::string>("sensor", sensor_name, "sensor");
+        nh_.param<std::string>("sensor_frame", sensor_frame, sensor_name + "_link");
+        nh_.param<std::string>("target_frame", target_frame, sensor_frame);
         nh_.param<double>("target_x", target_point.x, 1.0);
         nh_.param<double>("target_y", target_point.y, 0.0);
         nh_.param<double>("cirlce_radius", circle_radius, 0.200);
         nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
 
         // ROS Objects
-        std::string point_topic = "/" + camera_name + "/depth/points";
-        //camera_frame.insert(0, "/"); // camera is assumed to be level with the ground, this frame must one where Z is up
+        std::string point_topic = "/" + sensor_name + "/depth/points";
+        //sensor_frame.insert(0, "/"); // sensor is assumed to be level with the ground, this frame must one where Z is up
         //target_frame.insert(0, "/"); // this frame should have the Z axis pointing upward
         ROS_INFO("Reading depth points from: %s", point_topic.c_str());
-        ROS_INFO("Transforming cloud to '%s' frame", camera_frame.c_str());
+        ROS_INFO("Transforming cloud to '%s' frame", sensor_frame.c_str());
         pc_sub = nh_.subscribe(point_topic.c_str(), 1, &CylinderDetector::pcCallback, this);
         cyl_pub = nh_.advertise<geometry_msgs::PointStamped>("point", 1);
         marker_pub = nh_.advertise<visualization_msgs::MarkerArray>("markers", 1);
         pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
 
         //===== Tuning Paramters =====//
-        // These parameters are all based on the camera link frame (where Z axis is up)
+        // These parameters are all based on the sensor link frame (where Z axis is up)
         max_distance_x = 6; // m
         min_distance_x = 0; // m
         max_distance_y = 5; // m
@@ -235,8 +237,8 @@ public:
         // Convert ROS PointCloud2 message into PCL pointcloud
         rosMsgToPCL(msg, scene_cloud_optical_frame);
 
-        // Transform pointcloud into camera frame
-        transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, camera_frame);
+        // Transform pointcloud into sensor frame
+        transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, sensor_frame);
 
         // Get the bounds of the point cloud
         pcl::getMinMax3D(*scene_cloud_unfiltered, min_pt, max_pt);
@@ -324,7 +326,7 @@ public:
         rotation = Eigen::AngleAxisf(phi_min, Eigen::Vector3f::UnitZ());
 
         pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
-        //scene_cloud->header.frame_id = camera_frame;
+        //scene_cloud->header.frame_id = sensor_frame;
         */
         // Unnecessary filter required to apply transform????
         pass.setInputCloud(scene_cloud);
@@ -365,13 +367,13 @@ public:
             y_range = 0;
         }
 
-        // Remember that transforming from camera frame to the image frame mirrors the axes, so x pixels depend on the y range and vis-versa
+        // Remember that transforming from sensor frame to the image frame mirrors the axes, so x pixels depend on the y range and vis-versa
         x_pixels = round(y_range * resolution);
         y_pixels = round(x_range * resolution);
         x_pixel_delta = (y_range / x_pixels); // length of each pixel in image frame 'x' direction
         y_pixel_delta = (x_range / y_pixels); // length of each pixel in image frame 'y' direction
 
-        // Calculate mirrored points for y-values in camera frame (x direction in image frame)
+        // Calculate mirrored points for y-values in sensor frame (x direction in image frame)
         y_mirror_min = -y_max;
         y_mirror_max = -y_min;
 
@@ -379,10 +381,10 @@ public:
         top_image = cv::Mat::zeros(y_pixels, x_pixels, CV_8U); // first index is rows which represent the y dimension of the image
 
         for (int i = 0; i < scene_cloud->size(); ++i) {
-            // Transform camera points to image indices
+            // Transform sensor points to image indices
             int x_index;
             int y_index;
-            cameraToImage(scene_cloud->points[i].x, scene_cloud->points[i].y, x_index, y_index);
+            sensorToImage(scene_cloud->points[i].x, scene_cloud->points[i].y, x_index, y_index);
 
             // Check that the values are within bounds
             if (x_index >= 0 && x_index <= (x_pixels - 1) && y_index >= 0 && y_index <= (y_pixels - 1)) {
@@ -434,7 +436,6 @@ public:
         //----- Hough Transform Iteration
         generateAccumulatorUsingImage(top_image_contours, accumulator);
         // generateAccumulatorUsingImage_OldMethod(top_image_contours, accumulator);
-typedef int MyCustomType;
         // DEBUG: get the top cylinder position for drawing a circle on the image for debuggin
         // Scale accumulator matrix for better visualization
         double accum_max;
@@ -462,7 +463,8 @@ typedef int MyCustomType;
             checkCenterPoints(potentials, top_image);
         }
 
-        std::vector<double> variances_out(potentials.size(), 0);
+        std::vector<double> variances_out(potentials.size(), 0); // used for Mahalanobis calculations only when using radius as the feature
+
         // Filter potentials based on variance of points around circle
         if (use_variance_filter) {
             std::vector<double> variances(potentials.size(), 0);
@@ -474,19 +476,20 @@ typedef int MyCustomType;
             // }
             // cout << "\n";
 
-            // DEBUG: write variances to file
-            std::ofstream out_file;
-            out_file.open("/home/csm/Desktop/variances.csv", std::fstream::app);
-            for (int i = 0; i < variances.size(); i++) {
-                out_file << variances.at(i);
-                if (i != variances.size() - 1) {
-                    out_file << ",";
-                }
-                else {
-                    out_file << "\n";
-                }
-            }
-            out_file.close();
+            // // DEBUG: write variances to file
+            // std::ofstream out_file;
+            // out_file.open("/home/csm/Desktop/variances.csv", std::fstream::app);
+            // for (int i = 0; i < variances.size(); i++) {
+            //     out_file << variances.at(i);
+            //     if (i != variances.size() - 1) {
+            //         out_file << ",";
+            //     }
+            //     else {
+            //         out_file << "\n";
+            //     }
+            // }
+            // out_file.close();
+
             variances_out = variances;
 
         }
@@ -499,14 +502,15 @@ typedef int MyCustomType;
         //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
         //cout << '\n';
 
-
-        // Memory filter! Mahalnobris Distance Filter/ XXX Filtering thingy
-        float camera_frame_x;
-        float camera_frame_y;
+        //====================================================================//
+        // Mahalanobis Distance Filter with Bayesian Estimator
+        //====================================================================//
+        float sensor_frame_x;
+        float sensor_frame_y;
 
         for (int i = 0; i < potentials.size(); ++i) {
-            // Convert from image pixels(potentials) to meters(camera_frame)
-            imageToCamera(potentials.at(i).x, potentials.at(i).y, camera_frame_x, camera_frame_y);
+            // Convert from image pixels(potentials) to meters(sensor_frame)
+            imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
             // Need a different variance measurement!
             // We want to have 3 standard deviations form the center as the threshold maybe. So we need to 3
 
@@ -515,7 +519,7 @@ typedef int MyCustomType;
             //mahalanobisDistanceThreshold = 3.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
 
             // Calculate the mahalanobis distance using previous sigmas and target point values
-            mahalanobisDistance = sqrt(pow(camera_frame_x-target_point.x,2)/sigma_squared_x + pow(camera_frame_y-target_point.y,2)/sigma_squared_y);
+            mahalanobisDistance = sqrt(pow(sensor_frame_x-target_point.x,2)/sigma_squared_x + pow(sensor_frame_y-target_point.y,2)/sigma_squared_y);
             cout << "\n";
             cout << "Wall time: " << currentWallTime << "\n";
             cout << "Wall Time - Interval Time: " << currentWallTime-intervalTimeCount << "\n";
@@ -526,36 +530,37 @@ typedef int MyCustomType;
             cout << "Distance: " << mahalanobisDistance << "\n";
 
             if (mahalanobisDistance < mahalanobisDistanceThreshold) {
+                // Convert the sensor frame point into the target frame
 
                 // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
                 // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
                 num_of_points_in_filter++;
 
-                points_x.push_back(camera_frame_x);
-                points_y.push_back(camera_frame_y);
+                prior_points_x.push_back(sensor_frame_x);
+                prior_points_y.push_back(sensor_frame_y);
                 double sum_x = target_point.x;
                 double sum_y = target_point.y;
-                for(int k=0; k<points_x.size();k++){
-                    sum_x += points_x[k]; 
-                    sum_y += points_y[k]; 
+                for(int k=0; k<prior_points_x.size();k++){
+                    sum_x += prior_points_x[k];
+                    sum_y += prior_points_y[k];
                 }
                 double mean_x = sum_x/num_of_points_in_filter;
                 double mean_y = sum_y/num_of_points_in_filter;
                 double point_var_x = 0;
                 double point_var_y = 0;
-                for(int k =0; k<points_x.size(); k++){
-                    point_var_x += (points_x[k]-mean_x)*(points_x[k]-mean_x);
-                    point_var_y += (points_y[k]-mean_y)*(points_y[k]-mean_y);
+                for(int k =0; k<prior_points_x.size(); k++){
+                    point_var_x += (prior_points_x[k]-mean_x)*(prior_points_x[k]-mean_x);
+                    point_var_y += (prior_points_y[k]-mean_y)*(prior_points_y[k]-mean_y);
                 }
                 point_var_x /= num_of_points_in_filter;
                 point_var_y /= num_of_points_in_filter;
 
                 // Calculate new target point x value and sigma
-                target_point.x = (sigma_squared_x*camera_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                target_point.x = (sigma_squared_x*sensor_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
                 sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
-                
+
                 // Calculate new target point y value
-                target_point.y = (sigma_squared_y*camera_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                target_point.y = (sigma_squared_y*sensor_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
                 sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
 
                 //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
@@ -569,7 +574,7 @@ typedef int MyCustomType;
 
                 cout << "\n";
                 cout << num_of_points_in_filter << '\n';
-                cout << "Roll Point x,y: " << camera_frame_x << ", " << camera_frame_y << "\n";
+                cout << "Roll Point x,y: " << sensor_frame_x << ", " << sensor_frame_y << "\n";
                 cout << "Target Point X,Y: " << target_point.x << ", " << target_point.y << "\n";
                 cout << "XXX Distance: " << mahalanobisDistance << "\n";
                 cout << "XXX Threshold: " << mahalanobisDistanceThreshold << "\n";
@@ -577,10 +582,10 @@ typedef int MyCustomType;
                 cout << "current sigma_squared_y: " << sigma_squared_y << '\n';
                 cout << "Target Point X: " << target_point.x << "\n";
                 cout << "Target Point Y: " << target_point.y << "\n";
-                // imageToCamera(target_point.x, target_point.y, camera_frame_x, camera_frame_y);
+                // imageTosensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
                 geometry_msgs::PointStamped cylinder_point;
                 cylinder_point.header = msg.header;
-                cylinder_point.header.frame_id = camera_frame.c_str();
+                cylinder_point.header.frame_id = sensor_frame.c_str();
                 cylinder_point.point.x = target_point.x;
                 cylinder_point.point.y = target_point.y;
                 cylinder_point.point.z = 0;
@@ -592,10 +597,10 @@ typedef int MyCustomType;
                 delete_markers.action = visualization_msgs::Marker::DELETEALL;
                 cyl_markers.markers.push_back(delete_markers);
                 // DEBUG: Show cylinder marker
-                // imageToCamera(target_point.x, target_point.y, camera_frame_x, camera_frame_y);
+                // imageToSensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
                 visualization_msgs::Marker cyl_marker;
                 cyl_marker.header = msg.header;
-                cyl_marker.header.frame_id = camera_frame.c_str();
+                cyl_marker.header.frame_id = sensor_frame.c_str();
                 cyl_marker.id = 1;
                 cyl_marker.type = visualization_msgs::Marker::CYLINDER;
                 cyl_marker.pose.position.x = target_point.x;
@@ -618,7 +623,7 @@ typedef int MyCustomType;
 
             }
         }
-            
+
 
         // // DEBUG: Hightlight the max point with a circle
         // cv::Mat top_image_rgb;
@@ -656,17 +661,17 @@ typedef int MyCustomType;
         // cvWaitKey(1);
         //==================================//
 
-        //===== Convert Point Back to Camera Frame and Publish =====//
-        //float camera_frame_x;
-        //float camera_frame_y;
+        //===== Convert Point Back to Sensor Frame and Publish =====//
+        //float sensor_frame_x;
+        //float sensor_frame_y;
 
         if (!potentials.empty()) {
-            imageToCamera(potentials.at(0).x, potentials.at(0).y, camera_frame_x, camera_frame_y);
+            imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
             geometry_msgs::PointStamped cylinder_point;
             cylinder_point.header = msg.header;
-            cylinder_point.header.frame_id = camera_frame.c_str();
-            cylinder_point.point.x = camera_frame_x;
-            cylinder_point.point.y = camera_frame_y;
+            cylinder_point.header.frame_id = sensor_frame.c_str();
+            cylinder_point.point.x = sensor_frame_x;
+            cylinder_point.point.y = sensor_frame_y;
             cylinder_point.point.z = 0;
           //  cyl_pub.publish(cylinder_point);
         }
@@ -679,14 +684,14 @@ typedef int MyCustomType;
         cyl_markers.markers.push_back(delete_markers);
         for (int i = 0; i < potentials.size(); ++i) {
             // DEBUG: Show cylinder marker
-            imageToCamera(potentials.at(i).x, potentials.at(i).y, camera_frame_x, camera_frame_y);
+            imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
             visualization_msgs::Marker cyl_marker;
             cyl_marker.header = msg.header;
-            cyl_marker.header.frame_id = camera_frame.c_str();
+            cyl_marker.header.frame_id = sensor_frame.c_str();
             cyl_marker.id = i+1;
             cyl_marker.type = visualization_msgs::Marker::CYLINDER;
-            cyl_marker.pose.position.x = camera_frame_x;
-            cyl_marker.pose.position.y = camera_frame_y;
+            cyl_marker.pose.position.x = sensor_frame_x;
+            cyl_marker.pose.position.y = sensor_frame_y;
             cyl_marker.pose.position.z = 0;
             cyl_marker.pose.orientation.x = 0;
             cyl_marker.pose.orientation.y = 0;
@@ -1312,8 +1317,8 @@ typedef int MyCustomType;
                         double y;
                         double x_c;
                         double y_c;
-                        imageToCamera(points.at(n).x, points.at(n).y, x_c, y_c);
-                        imageToCamera(i, j, x, y);
+                        imageToSensor(points.at(n).x, points.at(n).y, x_c, y_c);
+                        imageToSensor(i, j, x, y);
                         double r = calculateRadius(x, y, x_c, y_c);
                         // Check if radius is in bounds
                         if ((r < upper_radius) && (r > lower_radius)) {
@@ -1333,9 +1338,9 @@ typedef int MyCustomType;
         std::vector<int> to_remove;
         for (int i = 0; i < points.size(); ++i) {
             // variance_tolerance = 0.001; // good baseline
-            // This equation calculates a tolerance based on distance from the camera. It was derived empirically. This assumes the target frame is the camera frame.
+            // This equation calculates a tolerance based on distance from the sensor. It was derived empirically. This assumes the target frame is the sensor frame.
             double x,y;
-            imageToCamera(points.at(i).x, points.at(i).y, x, y);
+            imageToSensor(points.at(i).x, points.at(i).y, x, y);
 
 
             double distance = sqrt(pow(x,2) + pow(y,2));
@@ -1367,21 +1372,21 @@ typedef int MyCustomType;
         double min_distance_sq = 10.0; // current minimum squared distance
         cv::Point closest_point; // the current closest point to the target
 
-        // Before cycling through all the points, convert the target point into camera frame.
+        // Before cycling through all the points, convert the target point into sensor frame.
         double target_cam_x;
         double target_cam_y;
-        targetToCamera(target.x, target.y, target_cam_x, target_cam_y);
+        targetToSensor(target.x, target.y, target_cam_x, target_cam_y);
 
         for (int i = 0; i < points.size(); ++i) {
             // Convert points from image frame to target frame
-            double potential_x_camera;
-            double potential_y_camera;
+            double potential_x_sensor;
+            double potential_y_sensor;
             double potential_x;
             double potential_y;
-            imageToCamera(points.at(i).x, points.at(i).y, potential_x, potential_y);
+            imageToSensor(points.at(i).x, points.at(i).y, potential_x, potential_y);
 
-            // Convert from camera frame to target frame
-            //cameraToTarget(potential_x_camera, potential_y_camera, potential_x, potential_y);
+            // Convert from sensor frame to target frame
+            //sensorToTarget(potential_x_sensor, potential_y_sensor, potential_x, potential_y);
 
             // Find minimum distance from target
 
@@ -1408,53 +1413,53 @@ typedef int MyCustomType;
         }
     }
 
-    void cameraToImage(float camera_x_in, float camera_y_in, int& image_x_out, int& image_y_out)
+    void sensorToImage(float sensor_x_in, float sensor_y_in, int& image_x_out, int& image_y_out)
     {
         // Calculate the x index
-        float y_mirror = -camera_y_in;
+        float y_mirror = -sensor_y_in;
         float y_translated = y_mirror - y_mirror_min;
         image_x_out = trunc(y_translated/x_pixel_delta);
 
         // Calculate the y index
-        int y_index_flipped = trunc(camera_x_in/y_pixel_delta); // target frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
+        int y_index_flipped = trunc(sensor_x_in/y_pixel_delta); // target frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
         image_y_out = (y_pixels - 1) - y_index_flipped;
     }
 
-    void imageToCamera(int image_x_in, int image_y_in, float& camera_x_out, float& camera_y_out)
+    void imageToSensor(int image_x_in, int image_y_in, float& sensor_x_out, float& sensor_y_out)
     {
         // Calculate the x position
         int y_index_flipped = (y_pixels - 1) - image_y_in;
-        camera_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
+        sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
 
         // Calculate the y position
         float y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
         float y_mirror = y_translated + y_mirror_min;
-        camera_y_out = -y_mirror;
+        sensor_y_out = -y_mirror;
     }
 
     // Overloaded function to handle 'double' inputs
-    void cameraToImage(double& camera_x_in, double& camera_y_in, int& image_x_out, int& image_y_out)
+    void sensorToImage(double& sensor_x_in, double& sensor_y_in, int& image_x_out, int& image_y_out)
     {
         // Calculate the x index
-        double y_mirror = -camera_y_in;
+        double y_mirror = -sensor_y_in;
         double y_translated = y_mirror - y_mirror_min;
         image_x_out = trunc(y_translated/x_pixel_delta);
 
         // Calculate the y index
-        int y_index_flipped = trunc(camera_x_in/y_pixel_delta); // camera frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
+        int y_index_flipped = trunc(sensor_x_in/y_pixel_delta); // sensor frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
         image_y_out = (y_pixels - 1) - y_index_flipped;
     }
     // Overloaded function to handle 'double' inputs
-    void imageToCamera(int image_x_in, int image_y_in, double& camera_x_out, double& camera_y_out)
+    void imageToSensor(int image_x_in, int image_y_in, double& sensor_x_out, double& sensor_y_out)
     {
         // Calculate the x position
         int y_index_flipped = (y_pixels - 1) - image_y_in;
-        camera_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
+        sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
 
         // Calculate the y position
         double y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
         double y_mirror = y_translated + y_mirror_min;
-        camera_y_out = -y_mirror;
+        sensor_y_out = -y_mirror;
     }
 
     void imageToAccumulator(int image_x_in, int image_y_in, int& accum_x_out, int& accum_y_out)
@@ -1475,27 +1480,27 @@ typedef int MyCustomType;
         image_y_out = accum_y_in - radius_pixels;
     }
 
-    void cameraToTarget(double camera_x_in, double camera_y_in, double& target_x_out, double& target_y_out)
+    void sensorToTarget(double sensor_x_in, double sensor_y_in, double& target_x_out, double& target_y_out)
     {
         /**
-         * Transforms a camera (x,y) point to an (x,y) point in the target
+         * Transforms a sensor (x,y) point to an (x,y) point in the target
          * frame
          */
 
-        // Camera point
-        geometry_msgs::PointStamped camera_point;
-        camera_point.header.frame_id = camera_frame.c_str();
-        camera_point.point.x = camera_x_in;
-        camera_point.point.y = camera_y_in;
+        // Sensor point
+        geometry_msgs::PointStamped sensor_point;
+        sensor_point.header.frame_id = sensor_frame.c_str();
+        sensor_point.point.x = sensor_x_in;
+        sensor_point.point.y = sensor_y_in;
 
         // Target point
         geometry_msgs::PointStamped target_point;
 
-        // Get transform from camera to target frame
-        tf_listener.waitForTransform(camera_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.1));
+        // Get transform from sensor to target frame
+        tf_listener.waitForTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.1));
         try {
             // Transform point
-            tf_listener.transformPoint(target_frame.c_str(), camera_point, target_point);
+            tf_listener.transformPoint(target_frame.c_str(), sensor_point, target_point);
         }
         catch(tf::TransformException& ex) {
             ROS_ERROR("Target Transform Exception: %s", ex.what());
@@ -1506,28 +1511,28 @@ typedef int MyCustomType;
         target_y_out = target_point.point.y;
     }
 
-    void targetToCamera(double target_x_in, double target_y_in, double& camera_x_out, double& camera_y_out)
+    void targetToSensor(double target_x_in, double target_y_in, double& sensor_x_out, double& sensor_y_out)
     {
         /**
-         * Transforms a point in the target frame to a the camera frame
+         * Transforms a point in the target frame to a the sensor frame
          */
 
         // Create ROS PointStamped for tf functions
-        geometry_msgs::PointStamped camera_point;
+        geometry_msgs::PointStamped sensor_point;
         geometry_msgs::PointStamped target_point;
         target_point.header.frame_id = target_frame.c_str();
         target_point.point.x = target_x_in;
         target_point.point.y = target_y_in;
 
-        // Get transform from target to camera frame
-        tf_listener.waitForTransform(target_frame.c_str(), camera_frame.c_str(), ros::Time(0), ros::Duration(0.1));
+        // Get transform from target to sensor frame
+        tf_listener.waitForTransform(target_frame.c_str(), sensor_frame.c_str(), ros::Time(0), ros::Duration(0.1));
         tf::StampedTransform transform;
         try {
             // Transform point
-            tf_listener.transformPoint(camera_frame.c_str(), target_point, camera_point);
+            tf_listener.transformPoint(sensor_frame.c_str(), target_point, sensor_point);
 
             // // DEBUG: check transform
-            // tf_listener.lookupTransform(camera_frame.c_str(), target_frame.c_str(), ros::Time(0), transform);
+            // tf_listener.lookupTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time(0), transform);
             // std::cout << "Transform from " << transform.frame_id_ << " to " << transform.child_frame_id_ << ":\n";
             // std::cout << transform.getOrigin()[0] << std::endl;
             // std::cout << transform.getOrigin()[1] << std::endl;
@@ -1538,18 +1543,18 @@ typedef int MyCustomType;
             // std::cout << transform.getRotation()[3] << std::endl;
         }
         catch(tf::TransformException& ex) {
-            ROS_ERROR("Camera Transform Exception: %s", ex.what());
+            ROS_ERROR("Sensor Transform Exception: %s", ex.what());
         }
 
         // Extract (x,y) positions from PointStamped
-        camera_x_out = camera_point.point.x;
-        camera_y_out = camera_point.point.y;
+        sensor_x_out = sensor_point.point.x;
+        sensor_y_out = sensor_point.point.y;
 
         // // DEBUG: check tranform
         // std::cout << "Target point (" << target_frame << ")\n";
         // std::cout << "(" << target_x_in << ", " << target_y_in << ")" << std::endl;
-        // std::cout << "Target point (" << camera_frame << ")\n";
-        // std::cout << "(" << camera_x_out << ", " << camera_y_out << ")" << std::endl;
+        // std::cout << "Target point (" << sensor_frame << ")\n";
+        // std::cout << "(" << sensor_x_out << ", " << sensor_y_out << ")" << std::endl;
     }
 
     double getWallTime() {

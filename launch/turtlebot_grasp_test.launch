@@ -1,3 +1,4 @@
+<!-- Simulate forklift using turtlebot to test approach control -->
 <launch>
     <arg name="debug" default="false"/>
 
@@ -16,7 +17,7 @@
     <include file="$(find turtlebot_bringup)/launch/minimal.launch"/>
 
     <!-- Start up the lidar -->
-    <include file="(find ouster_ros)/launch/lidar1.launch"/>
+    <include file="$(find ouster_ros)/launch/lidar2.launch"/>
 
     <!-- Start the cylinder detection -->
     <node pkg="grasping" name="cylinder_detection" type="cylinder_detection">
