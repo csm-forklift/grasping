@@ -252,6 +252,7 @@ public:
         // Update the forklift pose
         forklift_pose = msg;
 
+        // Get roll position (x_r, y_r) and desired approach angle (alpha)
         double x_r = roll_pose.pose.position.x; // x location of roll
         double y_r = roll_pose.pose.position.y; // y location of roll
         tf::Quaternion roll_q(
