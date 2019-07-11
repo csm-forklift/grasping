@@ -175,7 +175,7 @@ public:
         nh_.param<std::string>("target_frame", target_frame, sensor_frame);
         nh_.param<double>("target_x", target_point.x, 1.0);
         nh_.param<double>("target_y", target_point.y, 0.0);
-        nh_.param<double>("cirlce_radius", circle_radius, 0.200);
+        nh_.param<double>("/roll/radius", circle_radius, 0.200);
         nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
 
         // ROS Objects
@@ -531,13 +531,16 @@ public:
 
             if (mahalanobisDistance < mahalanobisDistanceThreshold) {
                 // Convert the sensor frame point into the target frame
+                double target_frame_x;
+                double target_frame_y;
+                sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
 
                 // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
                 // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
                 num_of_points_in_filter++;
 
-                prior_points_x.push_back(sensor_frame_x);
-                prior_points_y.push_back(sensor_frame_y);
+                prior_points_x.push_back(target_frame_x);
+                prior_points_y.push_back(target_frame_y);
                 double sum_x = target_point.x;
                 double sum_y = target_point.y;
                 for(int k=0; k<prior_points_x.size();k++){
