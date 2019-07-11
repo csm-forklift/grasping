@@ -192,6 +192,7 @@ public:
         max_fixed_y = 2.5; // m
         min_fixed_y = -2.5; // m
 
+
         // Filter pointcloud height
         filter_z_low = -0.100; // m
         filter_z_high = 0.500; // m
