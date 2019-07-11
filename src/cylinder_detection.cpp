@@ -67,6 +67,7 @@ private:
     tf::TransformListener tf_listener;
     std::string sensor_name;
     std::string sensor_frame;
+    std::string point_topic;
     std::string target_frame;
     std::string right_rotation_frame;
     std::string left_rotation_frame;
@@ -172,6 +173,7 @@ public:
         // Load Parameters
         nh_.param<std::string>("sensor", sensor_name, "sensor");
         nh_.param<std::string>("sensor_frame", sensor_frame, sensor_name + "_link");
+        nh_.param<std::string>("point_cloud_topic", point_topic, "/"+sensor_name+"/depth/points");
         nh_.param<std::string>("target_frame", target_frame, sensor_frame);
         nh_.param<double>("target_x", target_point.x, 1.0);
         nh_.param<double>("target_y", target_point.y, 0.0);
@@ -179,7 +181,6 @@ public:
         nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
 
         // ROS Objects
-        std::string point_topic = "/" + sensor_name + "/depth/points";
         //sensor_frame.insert(0, "/"); // sensor is assumed to be level with the ground, this frame must one where Z is up
         //target_frame.insert(0, "/"); // this frame should have the Z axis pointing upward
         ROS_INFO("Reading depth points from: %s", point_topic.c_str());
@@ -208,7 +209,7 @@ public:
 
         // Filter pointcloud height
         filter_z_low = -0.100; // m
-        filter_z_high = 0.500; // m
+        filter_z_high = 0.100; // m
         resolution = 256.0; // pixels/m, 256 approx. = 1280 pixels / 5 m
         rotation_resolution = 0.01; // radians/section
         num_potentials = 5; // number of maximums to check in accumulator
@@ -269,8 +270,8 @@ public:
         // PERFORM TRANSFORM FOR RIGHT ROTATION
         // Transform frame to minimum view angle in order to remove all points in the negative x range
         // Degrees are first variable of thetas. modify for desired angles of view off of center line
-        theta_min = 15.0 * (M_PI/180.0); // convert degrees to radians
-        theta_max = 50.0 * (M_PI/180.0); // convert degrees to radians
+        theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
+        theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
         phi_min = (M_PI/2) - theta_min;
         phi_max = (M_PI/2) - theta_max;
 

@@ -2,7 +2,9 @@
 <launch>
     <!-- Global Arguments and Parameters -->
     <arg name="debug" default="false"/>
-    <param name="/roll/radius" value="0.20"/>
+    <arg name="target_x" default="2.0"/>
+    <arg name="target_y" default="0.0"/>
+    <param name="/roll/radius" value="0.29"/>
 
     <!-- Start up the joystick -->
     <arg name="joy_config" default="logitech" />
@@ -17,40 +19,47 @@
 
     <!-- Begin turtlebot -->
     <!-- Simulated Turtlebot -->
+    <!--
     <include file="$(find turtlebot_gazebo)/launch/turtlebot_world.launch">
         <arg name="world_file" value="/opt/ros/kinetic/share/turtlebot_gazebo/worlds/empty.world"/>
         <arg name="gui" value="false"/>
     </include>
-    <!-- Read Turtlebot -->
-    <!--
-    <include file="$(find turtlebot_bringup)/launch/minimal.launch"/>
     -->
+    <!-- Real Turtlebot -->
+    <include file="$(find turtlebot_bringup)/launch/minimal.launch"/>
 
     <!-- Start up the lidar -->
     <include file="$(find ouster_ros)/launch/lidar2.launch"/>
+    <node pkg="tf"
+          type = "static_transform_publisher"
+          name = "lidar_broadcaster"
+          args = "0.0 0.0 0.4 0 0 0 1 base_link os1 50" />
 
     <!-- Start the cylinder detection -->
     <node pkg="grasping" name="cylinder_detection" type="cylinder_detection">
         <param name="debug" value="$(arg debug)"/>
+        <param name="sensor_frame" value="os1"/>
+        <param name="point_cloud_topic" value="/os1_node2/points"/>
         <param name="target_frame" value="odom"/>
-        <param name="target_x" value="0.0"/>
-        <param name="target_y" value="1.0"/>
+        <param name="target_x" value="$(arg target_x)"/>
+        <param name="target_y" value="$(arg target_y)"/>
     </node>
 
     <!-- Run approach controller -->
-    <node pkg="grasping" name="approach_controller" type="approach_controller">
-        <param name="target_x" value="2.0"/>
-        <param name="target_y" value="0.0"/>
+    <node pkg="grasping" name="approach_controller" type="approach_controller" output="screen">
+        <param name="target_x" value="$(arg target_x)"/>
+        <param name="target_y" value="$(arg target_y)"/>
         <param name="grasp_angle" value="0.7854"/>
-        <param name="angle_tolerance" value="0.01"/>
-        <param name="K_angle" value="1.0"/>
+        <param name="angle_tolerance" value="0.02"/>
+        <param name="K_angle" value="15.0"/>
         <param name="K_linear" value="1.0"/>
-        <param name="max_velocity" value="1.0"/>
+        <param name="max_velocity" value="0.25"/>
         <param name="grasp_plate_offset_x" value="0.36"/>
         <param name="grasp_plate_offset_y" value="-0.18"/>
         <param name="approach_offset" value="2.0"/>
         <param name="approach_tolerance" value="0.01"/>
         <param name="backout_distance" value="1.0"/>
+        <remap from="/approach_controller/point" to="/cylinder_detection/point"/>
     </node>
 
     <!-- Convert velocity and angle setpoints into a Twist command -->
@@ -58,6 +67,6 @@
         <param name="use_covariance" value="false"/>
         <remap from="/velocity_node/velocity" to="/velocity_node/velocity_setpoint"/>
         <remap from="/steering_node/filtered_angle" to="/steering_node/angle_setpoint"/>
-        <remap from="/velocity_conversion/twist" to="/mobile_base/commands/velocity"/>
+        <remap from="/velocity_conversion/twist" to="/cmd_vel_mux/input/teleop"/>
     </node>
 </launch>

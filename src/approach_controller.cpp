@@ -34,6 +34,8 @@ private:
     // Desired location for the ideal roll placement relative to the forklift
     double forklift_target_x;
     double forklift_target_y;
+    double prev_forklift_target_x;
+    double prev_forklift_target_y;
     double grasp_angle; // angle of the grasping plate surface normal relative to the forklift frame
     double grasp_plate_offset_x; // x offset for the shortarm plate in forklift frame
     double grasp_plate_offset_y; // y offset for the shortarm plate in forklift frame
@@ -71,7 +73,7 @@ private:
     double movement_velocity; // velocity command after bounding
 
     // Steering angle command of the back wheels, positive turns wheels to the left giving a right-hand turn and vis-versa
-    double steering_angle;
+    double steering_angle, steering_angle_min, steering_angle_max;
 
     // Operational State
     int operation_mode; // 0 = get to starting angle, 1 = approach roll, 2 = back out for retry
@@ -82,19 +84,21 @@ public:
     {
         //===== Set up ROS Objects =====//
         // Read in parameters
-        nh_.param<double>("~target_x", paperRoll_x, 0.0);
-        nh_.param<double>("~target_y", paperRoll_y, 0.0);
+        nh_.param<double>("target_x", paperRoll_x, 0.0);
+        nh_.param<double>("target_y", paperRoll_y, 0.0);
         nh_.param<double>("/roll/radius", roll_radius, 0.20);
-        nh_.param<double>("~grasp_angle", grasp_angle, M_PI/4);
-        nh_.param<double>("~angle_tolerance", angle_tolerance, 0.01);
-        nh_.param<double>("~K_angle", proportional_control_angle, 1.0);
-        nh_.param<double>("~K_linear", proportional_control_linear, 1.0);
-        nh_.param<double>("~max_velocity", max_velocity, 1.0);
-        nh_.param<double>("~grasp_plate_offset_x", grasp_plate_offset_x, 0.36);
-        nh_.param<double>("~grasp_plate_offset_y", grasp_plate_offset_y, -0.18);
-        nh_.param<double>("~approach_offset", approach_distance, 3.0);
-        nh_.param<double>("~approach_tolerance", approach_tolerance, 0.01);
-        nh_.param<double>("~backout_distance", backout_distance, 1.0);
+        nh_.param<double>("grasp_angle", grasp_angle, M_PI/4);
+        nh_.param<double>("angle_tolerance", angle_tolerance, 0.05);
+        nh_.param<double>("K_angle", proportional_control_angle, 1.0);
+        nh_.param<double>("K_linear", proportional_control_linear, 1.0);
+        nh_.param<double>("max_velocity", max_velocity, 1.0);
+        nh_.param<double>("grasp_plate_offset_x", grasp_plate_offset_x, 0.36);
+        nh_.param<double>("grasp_plate_offset_y", grasp_plate_offset_y, -0.18);
+        nh_.param<double>("approach_offset", approach_distance, 3.0);
+        nh_.param<double>("approach_tolerance", approach_tolerance, 0.01);
+        nh_.param<double>("backout_distance", backout_distance, 1.0);
+        nh_.param<double>("/forklift/steering/min_angle", steering_angle_min, -75*(M_PI/180.0));
+        nh_.param<double>("/forklift/steering/max_angle", steering_angle_max, 75*(M_PI/180.0));
 
         // Create publishers and subscribers
         stretch_sensor_sub = nh_.subscribe("/stretch_sensor", 1, &ApproachController::stretchSensorCallback, this);
@@ -124,14 +128,18 @@ public:
 
     void spin()
     {
-        while (ros::ok()) {
+        while (nh_.ok()) {
             // TODO: add 'if' statements around the publishers to make sure they do not publish if the control_mode is wrong
             if (control_mode == 2) {
                 // TODO: add logic that checks if the clamp is lowered and open before beginning.
                 if (operation_mode == 0) {
+                    // DEBUG:
+                    cout << "Initializing steering angle\n";
                     setInitialAngle();
                 }
                 if (operation_mode == 1) {
+                    // DEBUG:
+                    cout << "Beginning approach\n";
                     approach();
                 }
                 if (operation_mode == 2) {
@@ -150,6 +158,9 @@ public:
         steering_angle = -proportional_control_angle * (theta_desired - forklift_heading);
 
         // Set steering command
+        // Bound steering angle
+        steering_angle = min(steering_angle, steering_angle_max);
+        steering_angle = max(steering_angle, steering_angle_min);
         steering_angle_msg.data = steering_angle;
         steering_angle_pub.publish(steering_angle_msg);
         movement_velocity = 0;
@@ -159,7 +170,7 @@ public:
         // Give time for the steering angle to get to position
         // FIXME:
         // need to add a subscriber to the steering angle feedback topic and wait until the desired angle is reached.
-        ros::Duration(5.0).sleep();
+        ros::Duration(1.0).sleep();
 
         // Change operation mode to "approach"
         operation_mode = 1;
@@ -168,37 +179,54 @@ public:
     void approach()
     {
         // Control sequence for approaching the roll
-        while (stretch_on == false) {
+        while (stretch_on == false && ros::ok()) {
             // Calculate linear velocity for forklift
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
             linear_velocity = proportional_control_linear * approach_distance;
 
             // Adjust wheel angle as necessary
             theta_desired = atan2(paperRoll_y-forklift_target_y, paperRoll_x-forklift_target_x);
-            if(abs(theta_desired-forklift_heading) > angle_tolerance) {
-                steering_angle = -proportional_control_angle * (theta_desired - forklift_heading);
+            double theta_error = wrapToPi(theta_desired-forklift_heading);
+            if(abs(theta_error) > angle_tolerance) {
+                steering_angle = -proportional_control_angle * theta_error;
+                linear_velocity *= (M_PI/2 - theta_error)/(M_PI/2);
+            }
+            else {
+                steering_angle = 0;
             }
 
-            // Calculate movement velocity
-            movement_velocity = min(linear_velocity, max_velocity);
+            double prev_approach_distance = sqrt(pow(prev_forklift_target_y-paperRoll_y,2)+pow(prev_forklift_target_x-paperRoll_x,2));
 
-            if (movement_velocity < approach_tolerance) {
-                movement_velocity = 0;
+            double dot = ((prev_forklift_target_x-paperRoll_x)/prev_approach_distance)*((forklift_target_x-paperRoll_x)/approach_distance) + ((prev_forklift_target_y-paperRoll_y)/prev_approach_distance)*((forklift_target_y-paperRoll_y)/approach_distance);
+
+            // FIXME: additional idea for improvement
+            // add a length*sin(theta_error) to the approach_tolerance and tune the length to give an extra tolerance when the heading is off
+            if (approach_distance <= approach_tolerance || dot <= 0.999){
+                linear_velocity = 0;
 
                 // TODO:
                 // When on the forklift, add backout command here if the distance comes less than a desired threshold and the stretch sensors has not triggered.
             }
 
             // Send New steering angle
+            // Bound steering angle
+            steering_angle = min(steering_angle, steering_angle_max);
+            steering_angle = max(steering_angle, steering_angle_min);
             steering_angle_msg.data = steering_angle;
             steering_angle_pub.publish(steering_angle_msg);
 
             // Set forklift velocity
+            // Bound movement velocity
+            movement_velocity = min(linear_velocity, max_velocity);
             velocity_msg.data = movement_velocity;
             velocity_pub.publish(velocity_msg);
 
+            // DEBUG:
+            printf("Distance: %0.03f, Steering: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, Dot: %0.03f\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, dot);
+
             // Update states
             ros::spinOnce();
+            ros::Duration(0.05).sleep();
 
             // Break the loop if the operation mode changes
             if (operation_mode != 1) {
@@ -216,10 +244,22 @@ public:
     {
         // Control sequence for backing out after a failed grasp
         // Until desired distance is achieved between the forklift and the roll, send the backout velocity command
+        // DEBUG:
+
         while (approach_distance < backout_distance) {
-            movement_velocity = max_velocity/2;
-            velocity_msg.data = movement_velocity;
+            // Update approach distance
+            approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
+
+            // Set backup velocity
+            movement_velocity = max_velocity/5;
+            velocity_msg.data = -movement_velocity;
             velocity_pub.publish(velocity_msg);
+
+            // Set backup steering angle to 0
+            steering_angle = 0;
+            steering_angle_msg.data = steering_angle;
+            steering_angle_pub.publish(steering_angle_msg);
+
 
             ros::spinOnce();
         }
@@ -236,6 +276,10 @@ public:
 
     void odomCallback(const nav_msgs::Odometry &msg)
     {
+        // Update previous position
+        prev_forklift_target_x = forklift_target_x;
+        prev_forklift_target_y = forklift_target_y;
+
         // Update forklift current position and heading
         forklift_x = msg.pose.pose.position.x;
         forklift_y = msg.pose.pose.position.y;
@@ -281,10 +325,22 @@ public:
     {
         control_mode = msg.data;
     }
+
+    double wrapToPi(double angle)
+    {
+        angle = fmod(angle + M_PI, 2*M_PI);
+        if (angle < 0) {
+            angle += 2*M_PI;
+        }
+        return (angle - M_PI);
+    }
 };
 
 int main(int argc, char** argv)
 {
+    ros::init(argc, argv, "approach_controller");
+    ApproachController approach_controller = ApproachController();
+    approach_controller.spin();
 
-    return 1;
+    return 0;
 }
