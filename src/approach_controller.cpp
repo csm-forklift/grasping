@@ -9,6 +9,8 @@
 #include <std_msgs/Float64.h>
 #include <std_msgs/Int8.h>
 #include <tf/tf.h>
+#include <sys/time.h>
+#include <sensor_msgs/Joy.h>
 
 using namespace std;
 
@@ -24,6 +26,8 @@ private:
     ros::Subscriber roll_sub; // read paper roll's current pose
     ros::Subscriber grasp_success_sub; // reads whether the grasp was sucessful or not
     ros::Subscriber control_sub; // reads the control mode
+    ros::Subscriber steering_angle_sub;
+    ros::Subscriber joystick_override_sub;
     ros::Publisher velocity_pub; // publish linear velocity command
     ros::Publisher steering_angle_pub; // publish steering angle command
     ros::Rate rate; // publishing rate
@@ -76,11 +80,17 @@ private:
     double movement_velocity; // velocity command after bounding
 
     // Steering angle command of the back wheels, positive turns wheels to the left giving a right-hand turn and vis-versa
-    double steering_angle, steering_angle_min, steering_angle_max;
+    double steering_angle, steering_angle_min, steering_angle_max, current_steering_angle;
 
     // Operational State
     int operation_mode; // 0 = get to starting angle, 1 = approach roll, 2 = back out for retry
     int control_mode; // determines whether this controller is active or not
+
+    // Joystick Controller Variables
+    double timeout, timeout_start;
+    int autonomous_deadman_button, manual_deadman_button;
+    bool autonomous_deadman_on, manual_deadman_on; // deadman switch
+
 
 public:
     ApproachController() : nh_("~"), rate(30)
@@ -103,12 +113,18 @@ public:
         nh_.param<double>("/forklift/steering/min_angle", steering_angle_min, -75*(M_PI/180.0));
         nh_.param<double>("/forklift/steering/max_angle", steering_angle_max, 75*(M_PI/180.0));
 
+        nh_.param("manual_deadman", manual_deadman_button, 4);
+        nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
+        nh_.param("timeout", timeout, 1.0);
+
         // Create publishers and subscribers
         stretch_sensor_sub = nh_.subscribe("/stretch_sensor", 1, &ApproachController::stretchSensorCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
         control_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
+        steering_angle_sub = nh_.subscribe("/steering_node/filtered_angle", 1, &ApproachController::steeringAngleCallback, this);
+        joystick_override_sub = nh_.subscribe("/joy", 1, &ApproachController::joy_override, this);
         velocity_pub = nh_.advertise<std_msgs::Float64>("/velocity_node/velocity_setpoint", 1);
         steering_angle_pub = nh_.advertise<std_msgs::Float64>("/steering_node/angle_setpoint", 1);
 
@@ -126,10 +142,16 @@ public:
         linear_velocity = 0.0;
         movement_velocity = 0.0;
         steering_angle = 0;
+        current_steering_angle = 0.0;
 
         // Start in "Get to starting angle" mode
         operation_mode = 0;
         control_mode = 0;
+
+        // Initialize joystick variables
+        timeout_start = getWallTime();
+        autonomous_deadman_on = false;
+        manual_deadman_on = false;
     }
 
     void spin()
@@ -167,16 +189,16 @@ public:
         // Bound steering angle
         steering_angle = min(steering_angle, steering_angle_max);
         steering_angle = max(steering_angle, steering_angle_min);
-        steering_angle_msg.data = steering_angle;
-        steering_angle_pub.publish(steering_angle_msg);
+
         movement_velocity = 0;
-        velocity_msg.data = movement_velocity;
-        velocity_pub.publish(velocity_msg);
 
         // Give time for the steering angle to get to position
-        // FIXME:
-        // need to add a subscriber to the steering angle feedback topic and wait until the desired angle is reached.
-        ros::Duration(1.0).sleep();
+        // ros::Duration(1.0).sleep();
+        while (abs(current_steering_angle-steering_angle) > angle_tolerance) {
+            // Publish the new steering angle and velocity
+            publishMessages();
+            ros::spinOnce();
+        }
 
         // Change operation mode to "approach"
         operation_mode = 1;
@@ -202,7 +224,7 @@ public:
             else {
                 steering_angle = 0;
             }
-            
+
             linear_velocity = approach_distance*cos(theta_error);
 
             if(linear_velocity > approach_tolerance){
@@ -236,14 +258,13 @@ public:
             // Bound steering angle
             steering_angle = min(steering_angle, steering_angle_max);
             steering_angle = max(steering_angle, steering_angle_min);
-            steering_angle_msg.data = steering_angle;
-            steering_angle_pub.publish(steering_angle_msg);
 
             // Set forklift velocity
             // Bound movement velocity
             movement_velocity = min(linear_velocity, max_velocity);
-            velocity_msg.data = movement_velocity;
-            velocity_pub.publish(velocity_msg);
+
+            // Publish new steering angle and velocity
+            publishMessages();
 
             // DEBUG:
             printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, align: %0.03f, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, cos(theta_error), movement_velocity);
@@ -260,8 +281,11 @@ public:
 
         // Stop velocity
         movement_velocity = 0;
-        velocity_msg.data = movement_velocity;
-        velocity_pub.publish(velocity_msg);
+        //velocity_msg.data = movement_velocity;
+        //velocity_pub.publish(velocity_msg);
+
+        // Publish new velocity
+        publishMessages();
     }
 
     void backout()
@@ -276,14 +300,12 @@ public:
 
             // Set backup velocity
             movement_velocity = max_velocity/5;
-            velocity_msg.data = -movement_velocity;
-            velocity_pub.publish(velocity_msg);
 
             // Set backup steering angle to 0
             steering_angle = 0;
-            steering_angle_msg.data = steering_angle;
-            steering_angle_pub.publish(steering_angle_msg);
 
+            // Publish new steering angle and velocity
+            publishMessages();
 
             ros::spinOnce();
         }
@@ -356,6 +378,32 @@ public:
         control_mode = msg.data;
     }
 
+    void steeringAngleCallback(const std_msgs::Float64 &msg)
+    {
+        current_steering_angle = msg.data;
+    }
+
+    void joy_override(const sensor_msgs::Joy joy_msg)
+    {
+        // Update timeout time
+        timeout_start = getWallTime();
+
+        // Update deadman buttons
+        if (joy_msg.buttons[manual_deadman_button] == 1) {
+            manual_deadman_on = true;
+        }
+		else {
+            manual_deadman_on = false;
+        }
+
+        if (joy_msg.buttons[autonomous_deadman_button] == 1) {
+            autonomous_deadman_on = true;
+        }
+		else {
+            autonomous_deadman_on = false;
+        }
+	}
+
     double wrapToPi(double angle)
     {
         angle = fmod(angle + M_PI, 2*M_PI);
@@ -363,6 +411,41 @@ public:
             angle += 2*M_PI;
         }
         return (angle - M_PI);
+    }
+
+    double getWallTime() {
+        struct timeval time;
+        if (gettimeofday(&time, NULL)) {
+            return 0;
+        }
+        return (double)time.tv_sec + (double)time.tv_usec*0.000001;
+    }
+
+    void publishMessages() {
+
+        if (manual_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send no command
+        }
+        else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send desired steering angle through publisher
+            steering_angle_ms// Joystick has timed out, send 0 velocity command
+            // Do not send a steering angle command, so it remains where it is currently at.
+            std_msgs::Float64 velocity_msg;
+            velocity_msg.data = 0.0;
+            velocity_pub.publish(velocity_msg);g.data = steering_angle;
+            steering_angle_pub.publish(steering_angle_msg);
+
+            // Send desired velocity through publisher
+            velocity_msg.data = movement_velocity;
+            velocity_pub.publish(velocity_msg);
+        }
+        else {
+            // Joystick has timed out, send 0 velocity command
+            // Do not send a steering angle command, so it remains where it is currently at.
+            std_msgs::Float64 velocity_msg;
+            velocity_msg.data = 0.0;
+            velocity_pub.publish(velocity_msg);
+        }
     }
 };
 
