@@ -30,6 +30,9 @@ private:
     std_msgs::Float64 steering_angle_msg;
     std_msgs::Float64 velocity_msg;
 
+    // DEBUG: check forklift target point
+    ros::Publisher forklift_target_pub;
+
     //===== State Variables =====//
     // Desired location for the ideal roll placement relative to the forklift
     double forklift_target_x;
@@ -109,6 +112,9 @@ public:
         velocity_pub = nh_.advertise<std_msgs::Float64>("/velocity_node/velocity_setpoint", 1);
         steering_angle_pub = nh_.advertise<std_msgs::Float64>("/steering_node/angle_setpoint", 1);
 
+        // DEBUG:
+        forklift_target_pub = nh_.advertise<geometry_msgs::PointStamped>("forklift_target", 1);
+
         //===== Initialize States =====//
         forklift_x = 0;
         forklift_y = 0;
@@ -182,19 +188,37 @@ public:
         while (stretch_on == false && ros::ok()) {
             // Calculate linear velocity for forklift
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
-            linear_velocity = proportional_control_linear * approach_distance;
+            //linear_velocity = proportional_control_linear * approach_distance;
+
+            cout << "Roll x: " << paperRoll_x << ", y: " << paperRoll_y << "\n";
 
             // Adjust wheel angle as necessary
             theta_desired = atan2(paperRoll_y-forklift_target_y, paperRoll_x-forklift_target_x);
             double theta_error = wrapToPi(theta_desired-forklift_heading);
             if(abs(theta_error) > angle_tolerance) {
                 steering_angle = -proportional_control_angle * theta_error;
-                linear_velocity *= (M_PI/2 - theta_error)/(M_PI/2);
+                //linear_velocity *= (M_PI/2 - theta_error)/(M_PI/2);
             }
             else {
                 steering_angle = 0;
             }
+            
+            linear_velocity = approach_distance*cos(theta_error);
 
+            if(linear_velocity > approach_tolerance){
+                if (cos(theta_error) < 0) {
+                    steering_angle = -steering_angle;
+                    linear_velocity = linear_velocity*5*proportional_control_linear;
+                }
+                else {
+                    linear_velocity = linear_velocity*proportional_control_linear;
+                }
+            }
+            else{
+                linear_velocity = 0;
+            }
+
+/*
             double prev_approach_distance = sqrt(pow(prev_forklift_target_y-paperRoll_y,2)+pow(prev_forklift_target_x-paperRoll_x,2));
 
             double dot = ((prev_forklift_target_x-paperRoll_x)/prev_approach_distance)*((forklift_target_x-paperRoll_x)/approach_distance) + ((prev_forklift_target_y-paperRoll_y)/prev_approach_distance)*((forklift_target_y-paperRoll_y)/approach_distance);
@@ -207,7 +231,7 @@ public:
                 // TODO:
                 // When on the forklift, add backout command here if the distance comes less than a desired threshold and the stretch sensors has not triggered.
             }
-
+*/
             // Send New steering angle
             // Bound steering angle
             steering_angle = min(steering_angle, steering_angle_max);
@@ -222,7 +246,7 @@ public:
             velocity_pub.publish(velocity_msg);
 
             // DEBUG:
-            printf("Distance: %0.03f, Steering: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, Dot: %0.03f\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, dot);
+            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, align: %0.03f, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, cos(theta_error), movement_velocity);
 
             // Update states
             ros::spinOnce();
@@ -300,6 +324,12 @@ public:
         double plate_y = forklift_y + grasp_plate_offset_y;
         forklift_target_x = plate_x + roll_radius*cos(grasp_angle + forklift_heading);
         forklift_target_y = plate_y + roll_radius*sin(grasp_angle + forklift_heading);
+
+        geometry_msgs::PointStamped forklift_target;
+        forklift_target.header.frame_id = "/odom";
+        forklift_target.point.x = forklift_target_x;
+        forklift_target.point.y = forklift_target_y;
+        forklift_target_pub.publish(forklift_target);
     }
 
     void rollCallback(const geometry_msgs::PointStamped &msg)

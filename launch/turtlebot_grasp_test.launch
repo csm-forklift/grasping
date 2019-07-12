@@ -3,8 +3,8 @@
     <!-- Global Arguments and Parameters -->
     <arg name="debug" default="false"/>
     <arg name="target_x" default="2.0"/>
-    <arg name="target_y" default="0.0"/>
-    <param name="/roll/radius" value="0.29"/>
+    <arg name="target_y" default="-0.29"/>
+    <param name="/roll/radius" value="0.296"/>
 
     <!-- Start up the joystick -->
     <arg name="joy_config" default="logitech" />
@@ -29,17 +29,17 @@
     <include file="$(find turtlebot_bringup)/launch/minimal.launch"/>
 
     <!-- Start up the lidar -->
-    <include file="$(find ouster_ros)/launch/lidar2.launch"/>
+    <include file="$(find ouster_ros)/launch/lidar1.launch"/>
     <node pkg="tf"
           type = "static_transform_publisher"
           name = "lidar_broadcaster"
-          args = "0.0 0.0 0.4 0 0 0 1 base_link os1 50" />
+          args = "0.01 0.0 0.52 0 0 0 1 base_link os1 50" />
 
     <!-- Start the cylinder detection -->
     <node pkg="grasping" name="cylinder_detection" type="cylinder_detection">
         <param name="debug" value="$(arg debug)"/>
         <param name="sensor_frame" value="os1"/>
-        <param name="point_cloud_topic" value="/os1_node2/points"/>
+        <param name="point_cloud_topic" value="/os1_node1/points"/>
         <param name="target_frame" value="odom"/>
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
@@ -50,14 +50,14 @@
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
         <param name="grasp_angle" value="0.7854"/>
-        <param name="angle_tolerance" value="0.02"/>
-        <param name="K_angle" value="15.0"/>
+        <param name="angle_tolerance" value="0.01"/>
+        <param name="K_angle" value="10.0"/>
         <param name="K_linear" value="1.0"/>
         <param name="max_velocity" value="0.25"/>
         <param name="grasp_plate_offset_x" value="0.36"/>
-        <param name="grasp_plate_offset_y" value="-0.18"/>
+        <param name="grasp_plate_offset_y" value="-0.19"/>
         <param name="approach_offset" value="2.0"/>
-        <param name="approach_tolerance" value="0.01"/>
+        <param name="approach_tolerance" value="-0.10"/>
         <param name="backout_distance" value="1.0"/>
         <remap from="/approach_controller/point" to="/cylinder_detection/point"/>
     </node>

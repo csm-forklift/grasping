@@ -208,8 +208,8 @@ public:
         intervalTimeCount = 0.0;
 
         // Filter pointcloud height
-        filter_z_low = -0.100; // m
-        filter_z_high = 0.100; // m
+        filter_z_low = -0.200; // m
+        filter_z_high = 0.200; // m
         resolution = 256.0; // pixels/m, 256 approx. = 1280 pixels / 5 m
         rotation_resolution = 0.01; // radians/section
         num_potentials = 5; // number of maximums to check in accumulator
@@ -589,7 +589,7 @@ public:
                 // imageTosensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
                 geometry_msgs::PointStamped cylinder_point;
                 cylinder_point.header = msg.header;
-                cylinder_point.header.frame_id = sensor_frame.c_str();
+                cylinder_point.header.frame_id = target_frame.c_str();
                 cylinder_point.point.x = target_point.x;
                 cylinder_point.point.y = target_point.y;
                 cylinder_point.point.z = 0;
@@ -604,7 +604,7 @@ public:
                 // imageToSensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
                 visualization_msgs::Marker cyl_marker;
                 cyl_marker.header = msg.header;
-                cyl_marker.header.frame_id = sensor_frame.c_str();
+                cyl_marker.header.frame_id = target_frame.c_str();
                 cyl_marker.id = 1;
                 cyl_marker.type = visualization_msgs::Marker::CYLINDER;
                 cyl_marker.pose.position.x = target_point.x;
