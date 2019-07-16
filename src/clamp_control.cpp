@@ -1,5 +1,7 @@
 #include <iostream>
+#include <vector>
 #include <ros/ros.h>
+#include <signal.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/Int16.h>
@@ -41,6 +43,9 @@ private:
 	bool grasp_status;
 	int operation_mode;
 
+    int window_size = 10;
+    std::vector<float> stretch_window;
+
 public:
 	ClampControl() : nh(""), nh_("~")
 	{
@@ -66,11 +71,12 @@ public:
 		grasp_status_pub = nh_.advertise<std_msgs::Bool>("grasp_status", 1, true);
         grasp_finished_pub = nh_.advertise<std_msgs::Bool>("grasp_finished", 1, true); // latched, meaning it waits for subscribers to send a message
 
+        //signal(SIGINT, ClampControl::shutdownHandler);
+
         // Initialize States
 		operation_mode = 0; // starting with raising clamp
         force = 0;
         stretch = 0;
-
 	}
 
 
@@ -109,13 +115,37 @@ public:
 
 	void stretch_Callback(const std_msgs::Float32::ConstPtr& msg)
 	{
-		stretch = msg -> data;
+        if (stretch_window.size() >= window_size) {
+            stretch_window.erase(stretch_window.begin());
+            stretch_window.push_back(msg->data);
+        }
+        else {
+            stretch_window.push_back(msg->data);
+        }
+        float sum = 0;
+        for (int i = 0; i < stretch_window.size(); ++i) {
+            sum += stretch_window.at(i);
+        }
+        stretch = sum/stretch_window.size();
 	}
 
 	void clamp_Callback(const std_msgs::Int16::ConstPtr& msg)
 	{
-			controller_value = msg -> data;
+		controller_value = msg -> data;
 	}
+
+    void shutdownHandler(int sig)
+    {
+        // Stop motion before shutting down
+        std_msgs::Float32 clamp_movement_msg;
+    	std_msgs::Float32 clamp_grasp_msg;
+        clamp_movement_msg.data = 0.0;
+        clamp_grasp_msg.data = 0.0;
+        clamp_movement_pub.publish(clamp_movement_msg);
+    	clamp_grasp_pub.publish(clamp_grasp_msg);
+
+        ros::shutdown();
+    }
 };
 
 
@@ -296,6 +326,7 @@ void ClampControl::controller()
 int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "clamp_control");
+    ros::init(argc, argv, "clamp_control", ros::init_options::NoSigintHandler);
 
 	ClampControl clamp_control;
 
