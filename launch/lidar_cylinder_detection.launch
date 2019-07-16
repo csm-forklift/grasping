@@ -1,4 +1,4 @@
-<!-- Starts up all nodes for running a single camera -->
+<!-- Starts cylinder detection with a lidar -->
 <launch>
     <!-- Prints output messages to screen for all nodes -->
     <arg name="debug" default="false" />
@@ -7,6 +7,8 @@
     <arg name="camera" default="os1" />
 
     <include file="$(find ouster_ros)/launch/lidar2.launch">
+    <include file="$(find ouster_ros)/launch/lidar1.launch">
+
         <arg name="respawn" value="true" />
     </include>
     <node pkg="tf"
@@ -16,8 +18,7 @@
     
     <!-- Cylinder Detection Node -->
     <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" respawn="true" output="screen">
-    
-        <remap from="/os1/depth/points" to="/os1_node2/points" />
+        <remap from="/os1/depth/points" to="/os1_node1/points" />
         <param name="debug" value="$(arg debug)" />
         <param name="display_image" value="$(arg display_image)" />
         <param name="camera" value="$(arg camera)" />

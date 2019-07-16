@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(grasping)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   pcl_conversions
   pcl_ros
+  message_generation
 )
 
 ## System dependencies are found with CMake's conventions
@@ -61,12 +62,11 @@ find_package(OpenCV)
 #   Message2.msg
 # )
 
-## Generate services in the 'srv' folder
-# add_service_files(
-#   FILES
-#   Service1.srv
-#   Service2.srv
-# )
+# Generate services in the 'srv' folder
+add_service_files(
+  FILES
+  OptimizeManeuver.srv
+)
 
 ## Generate actions in the 'action' folder
 # add_action_files(
@@ -75,11 +75,11 @@ find_package(OpenCV)
 #   Action2.action
 # )
 
-## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   nav_msgs#   std_msgs
-# )
+# Generate added messages and services with any dependencies listed here
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -143,10 +143,13 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 # add_executable(${PROJECT_NAME}_node src/bspline_node.cpp)
-add_executable(bspline_path src/bspline.cpp)
+add_executable(approach_path src/approach_path.cpp)
 add_executable(test_points src/test_points.cpp)
 add_executable(clamp_switch_node src/clamp_switch_node.cpp)
 add_executable(cylinder_detection src/cylinder_detection.cpp)
+add_executable(approach_controller src/approach_controller.cpp)
+add_executable(clamp_control src/clamp_control.cpp)
+add_executable(clamp_control_test_node src/clamp_control_test_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -162,7 +165,10 @@ add_executable(cylinder_detection src/cylinder_detection.cpp)
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
 # )
-target_link_libraries(bspline_path ${catkin_LIBRARIES})
+target_link_libraries(approach_path ${catkin_LIBRARIES})
 target_link_libraries(test_points ${catkin_LIBRARIES})
 target_link_libraries(clamp_switch_node ${catkin_LIBRARIES})
 target_link_libraries(cylinder_detection ${catkin_LIBRARIES})
+target_link_libraries(approach_controller ${catkin_LIBRARIES})
+target_link_libraries(clamp_control ${catkin_LIBRARIES})
+target_link_libraries(clamp_control_test_node ${catkin_LIBRARIES})
