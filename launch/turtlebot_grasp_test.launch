@@ -25,6 +25,7 @@
         <arg name="gui" value="false"/>
     </include>
     -->
+    
     <!-- Real Turtlebot -->
     <include file="$(find turtlebot_bringup)/launch/minimal.launch"/>
 
@@ -57,8 +58,11 @@
         <param name="grasp_plate_offset_x" value="0.36"/>
         <param name="grasp_plate_offset_y" value="-0.19"/>
         <param name="approach_offset" value="2.0"/>
-        <param name="approach_tolerance" value="-0.10"/>
+        <param name="approach_tolerance" value="0.001"/>
         <param name="backout_distance" value="1.0"/>
+        <param name="manual_deadman" value="4"/>
+        <param name="autonomous_deadman" value="5"/>
+        <param name="timeout" value="1.0"/>
         <remap from="/approach_controller/point" to="/cylinder_detection/point"/>
     </node>
 
