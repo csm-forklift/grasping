@@ -1,0 +1,30 @@
+<launch>
+
+    <arg name="port_clamp" default="/dev/ttyACM0"/>
+    <arg name="joy_config" default="logitech" />
+    <arg name="joy_dev" default="/dev/input/js0" />
+    <arg name="config_filepath" default="$(find teleop_twist_joy)/config/$(arg joy_config).config.yaml" />
+
+    <node pkg="rosserial_python" name="serial_node" type="serial_node.py" output="screen" respawn="true">
+        <param name="port" value="$(arg port_clamp)" />
+    </node>
+
+    <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
+        <param name="clamp_scale" value="0.7" />
+        <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
+        <remap from="/clamp_control/clamp_grasp" to="/clamp_switch_node/clamp_grasp"/>
+    </node>
+    
+    <node pkg="joy" type="joy_node" name="joy_node">
+        <param name="dev" value="$(arg joy_dev)" />
+        <param name="deadzone" value="0.3" />
+        <param name="autorepeat_rate" value="20" />
+    </node>
+
+    <node pkg="grasping" name="clamp_switch_node" type="clamp_switch_node">
+        <param name="deadman" value="4" />
+        <param name="scale_linear" value="1.0" />
+    </node>
+
+</launch>
+

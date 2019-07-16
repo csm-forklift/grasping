@@ -428,11 +428,7 @@ public:
         }
         else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
             // Send desired steering angle through publisher
-            steering_angle_ms// Joystick has timed out, send 0 velocity command
-            // Do not send a steering angle command, so it remains where it is currently at.
-            std_msgs::Float64 velocity_msg;
-            velocity_msg.data = 0.0;
-            velocity_pub.publish(velocity_msg);g.data = steering_angle;
+            steering_angle_msg.data = steering_angle;
             steering_angle_pub.publish(steering_angle_msg);
 
             // Send desired velocity through publisher
