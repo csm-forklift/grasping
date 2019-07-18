@@ -118,7 +118,7 @@ public:
         nh_.param("timeout", timeout, 1.0);
 
         // Create publishers and subscribers
-        stretch_sensor_sub = nh_.subscribe("/stretch_sensor", 1, &ApproachController::stretchSensorCallback, this);
+        stretch_sensor_sub = nh_.subscribe("/clamp_control/stretch", 1, &ApproachController::stretchSensorCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
