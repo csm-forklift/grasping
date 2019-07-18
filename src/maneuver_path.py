@@ -721,8 +721,8 @@ class ManeuverPath:
     def rollCallback(self, msg):
         '''
         Reads in the rolls target pose. The (x,y) position are contained in the
-        pose.position variable and the yaw angle is contained int he
-        pose.orientation.z variable.
+        pose.position variable and orientation represents the surface direction
+        towards which the vehicle should approach.
 
         Args:
         -----

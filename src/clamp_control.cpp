@@ -1,9 +1,11 @@
 #include <iostream>
 #include <vector>
+#include <algorithm> // std::find
 #include <ros/ros.h>
 #include <signal.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/Int8.h>
 #include <std_msgs/Int16.h>
 
 class ClampControl
@@ -12,7 +14,7 @@ private:
 	ros::NodeHandle nh;
     ros::NodeHandle nh_;
 
-    ros::Subscriber clamp_control_sub;
+    ros::Subscriber control_mode_sub;
 
 	ros::Subscriber limit_switch_up_sub;
 	ros::Subscriber limit_switch_down_sub;
@@ -34,7 +36,8 @@ private:
 	bool limit_close;
 	int force;
 	float stretch;
-	int controller_value;
+	int control_mode;
+    std::vector<int> available_control_modes; // vector of possible values for turing on this controller
 
     double clamp_scale; // adjusts value sent to the arduino controlling the clamp, range: [0, 1]
 	float clamp_grasp;
@@ -55,7 +58,7 @@ public:
         std::cout << "Clamp scale: " << clamp_scale << '\n';
 
 		// to be subscribed to the controller for operation
-		clamp_control_sub = nh.subscribe<std_msgs::Int16> ("control_mode", 1, &ClampControl::clamp_Callback, this);
+		control_mode_sub = nh.subscribe<std_msgs::Int8> ("/control_mode", 1, &ClampControl::controlModeCallback, this);
 
 		limit_switch_up_sub = nh.subscribe<std_msgs::Bool> ("switch_status_up", 1, &ClampControl::limit_up_Callback, this);
 		limit_switch_down_sub = nh.subscribe<std_msgs::Bool> ("switch_status_down", 1, &ClampControl::limit_down_Callback, this);
@@ -77,6 +80,24 @@ public:
 		operation_mode = 0; // starting with raising clamp
         force = 0;
         stretch = 0;
+
+        //===== Print out possible values for control mode =====//
+        // Pushback more numbers to allow this controller to operate in more
+        // modes
+        available_control_modes.push_back(3);
+        std::string message = "Available control_modes for [" + ros::this_node::getName() + "]: ";
+        for (int i = 0; i < available_control_modes.size(); ++i) {
+            char msg_buffer[10]; // increase size if more digits are needed
+            sprintf(msg_buffer, "%d", available_control_modes.at(i));
+            message += msg_buffer;
+            if (i != available_control_modes.size() - 1) {
+                message += ", ";
+            }
+            else {
+                message += '\n';
+            }
+        }
+        ROS_INFO("%s", message.c_str());
 	}
 
 
@@ -129,9 +150,9 @@ public:
         stretch = sum/stretch_window.size();
 	}
 
-	void clamp_Callback(const std_msgs::Int16::ConstPtr& msg)
+	void controlModeCallback(const std_msgs::Int8::ConstPtr& msg)
 	{
-		controller_value = msg -> data;
+		control_mode = msg -> data;
 	}
 
     void shutdownHandler(int sig)
@@ -238,6 +259,18 @@ void ClampControl::raise_clamp()
 	}
 }
 
+bool checkControlMode(int mode, std::vector<int> vector_of_modes)
+{
+    // Use 'find' on the vector to determine existence of 'mode'
+    std::vector<int>::iterator it;
+    it = std::find(vector_of_modes.begin(), vector_of_modes.end(), mode);
+    if (it != vector_of_modes.end()) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
 
 void ClampControl::controller()
 {
@@ -254,7 +287,7 @@ void ClampControl::controller()
      */
 
 	// Picking operation
-	if (controller_value == 7)
+	if (checkControlMode(control_mode, available_control_modes))
 	{
 		if (operation_mode == 0)
 		{

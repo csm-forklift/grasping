@@ -20,7 +20,7 @@
         <arg name="world_file" value="/opt/ros/kinetic/share/turtlebot_gazebo/worlds/empty.world"/>
         <arg name="gui" value="false"/>
     </include>
-    
+
     <!--===================================-->
     <!-- Obstacle Avoidance Path Generator -->
     <!--===================================-->
@@ -28,7 +28,7 @@
         <remap from="/path" to="/obstacle_avoidance_path"/>
         <remap from="map" to="test_map_generator/map"/>
     </node>
-    
+
     <!--=========================-->
     <!-- Maneuver Path Generator -->
     <!--=========================-->
@@ -43,7 +43,7 @@
     <node pkg="grasping" type="approach_path" name="approach_path">
         <remap from="/approach_path/path" to="/approach_path"/>
     </node>
-    
+
     <!--======================-->
     <!-- Velocity Controllers -->
     <!--======================-->
@@ -55,19 +55,19 @@
         <remap from="/steering_node/filtered_angle" to="/controls/angle_setpoint"/>
         <remap from="/velocity_conversion/twist" to="/mobile_base/commands/velocity"/>
     </node>
-    
+
     <!--==============-->
-    <!-- Path Handler -->
+    <!-- Master Controller -->
     <!--==============-->
-    <node pkg="motion_testing" type="path_handler.py" name="path_handler" output="screen"/>
-    
+    <node pkg="motion_testing" type="master_controller.py" name="master_controller" output="screen"/>
+
     <!--===================-->
     <!-- Generate Test Map -->
     <!--===================-->
     <node pkg="motion_testing" type="test_map_generator.py" name="test_map_generator">
         <remap from="/test_map_generator/target" to="/roll/pose" />
     </node>
-    
+
     <!--====================-->
     <!-- Joystick Simulator -->
     <!--====================-->
