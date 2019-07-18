@@ -55,7 +55,7 @@ public:
         std::cout << "Clamp scale: " << clamp_scale << '\n';
 
 		// to be subscribed to the controller for operation
-		clamp_control_sub = nh.subscribe<std_msgs::Int16> ("controller", 1, &ClampControl::clamp_Callback, this);
+		clamp_control_sub = nh.subscribe<std_msgs::Int16> ("control_mode", 1, &ClampControl::clamp_Callback, this);
 
 		limit_switch_up_sub = nh.subscribe<std_msgs::Bool> ("switch_status_up", 1, &ClampControl::limit_up_Callback, this);
 		limit_switch_down_sub = nh.subscribe<std_msgs::Bool> ("switch_status_down", 1, &ClampControl::limit_down_Callback, this);

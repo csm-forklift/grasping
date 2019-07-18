@@ -16,7 +16,7 @@ int main(int argc, char **argv)
 	ros::NodeHandle nh;
     ros::Subscriber clamp_movement_sub = nh.subscribe("/clamp_control/clamp_movement", 1, movementCallback);
     ros::Subscriber clamp_grasp_sub = nh.subscribe("/clamp_control/clamp_grasp", 1, graspCallback);
-	ros::Publisher pub_controller = nh.advertise<std_msgs::Int16> ("controller", 3, true); // latched, meaning it waits for subscribers to send a message
+	ros::Publisher pub_controller = nh.advertise<std_msgs::Int16> ("control_mode", 3, true); // latched, meaning it waits for subscribers to send a message
 	ros::Publisher pub_limit_up = nh.advertise<std_msgs::Bool> ("limit_switch_up", 3);
 	ros::Publisher pub_limit_down = nh.advertise<std_msgs::Bool> ("limit_switch_down", 3);
 	ros::Publisher pub_limit_open = nh.advertise<std_msgs::Bool> ("limit_switch_open", 3);
