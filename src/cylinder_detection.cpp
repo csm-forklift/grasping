@@ -76,6 +76,7 @@ private:
     std::string left_rotation_frame;
     int control_mode; // this node publishes only when this variable is a specific value
     std::vector<int> available_control_modes; // vector of possible numbers the 'control_mode' can be to turn this node on
+    bool debug; // turns on some debugging features
 
     //===== Tuning Paramters
     float max_distance_x; // m
@@ -185,6 +186,7 @@ public:
         nh_.param<double>("target_y", target_point.y, 0.0);
         nh_.param<double>("/roll/radius", circle_radius, 0.200);
         nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
+        nh_.param<bool>("debug", debug, false);
 
         //===== ROS Objects =====//
         //sensor_frame.insert(0, "/"); // sensor is assumed to be level with the ground, this frame must one where Z is up
@@ -195,7 +197,9 @@ public:
         control_mode_sub = nh_.subscribe("/control_mode", 1, &CylinderDetector::controlModeCallback, this);
         cyl_pub = nh_.advertise<geometry_msgs::PointStamped>("point", 1);
         marker_pub = nh_.advertise<visualization_msgs::MarkerArray>("markers", 1);
-        pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
+        if (debug) {
+            pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
+        }
 
         //===== Print out possible values for control mode =====//
         // Pushback more numbers to allow this controller to operate in more
@@ -378,9 +382,11 @@ public:
              */
 
             // DEBUG: Publish filtered pointcloud
-            sensor_msgs::PointCloud2 pc_msg;
-            pclToROSMsg(scene_cloud, pc_msg);
-            pc_debug_pub.publish(pc_msg);
+            if (debug) {
+                sensor_msgs::PointCloud2 pc_msg;
+                pclToROSMsg(scene_cloud, pc_msg);
+                pc_debug_pub.publish(pc_msg);
+            }
 
             // If final pointcloud contains no points, exit the callback
             if (scene_cloud->size() == 0) {
