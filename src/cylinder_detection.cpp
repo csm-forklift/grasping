@@ -47,6 +47,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl_ros/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <vector>
 
 
 // Define the pointtype used with PointCloud data
@@ -107,6 +108,7 @@ private:
     bool use_variance_filter; // filters points based off the variance calculated using points within the vicinity of the expected circle
     bool use_location_filter; // Rejects all points which do not lie near the desired goal location (this should return only one point at most)
     int num_of_points_in_filter =1; // For memory update points, need to start at 1 since we have a temp target point
+    int interval_count = 1;
     std::vector<double> prior_points_x; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     std::vector<double> prior_points_y; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     double sigma_squared_x =1, sigma_squared_y=1;
@@ -509,6 +511,12 @@ public:
         float sensor_frame_x;
         float sensor_frame_y;
 
+        double mean_x = 0.0;
+        double mean_y = 0.0;
+        double sum_x = 0.0;
+        double sum_y = 0.0;
+        double point_count = 10;
+
         for (int i = 0; i < potentials.size(); ++i) {
             // Convert from image pixels(potentials) to meters(sensor_frame)
             imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
@@ -516,11 +524,14 @@ public:
             // We want to have 3 standard deviations form the center as the threshold maybe. So we need to 3
 
             currentWallTime = getWallTime();
-            mahalanobisDistanceThreshold = 3*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y)) * ceil((currentWallTime-intervalTimeCount)/5.0) * exp(ceil((currentWallTime-intervalTimeCount)/0.5));
-            //mahalanobisDistanceThreshold = 3.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
+            mahalanobisDistanceThreshold = 5*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y)) * ceil((currentWallTime-intervalTimeCount)/5.0) * exp(ceil((currentWallTime-intervalTimeCount)/0.2));
+            //mahalanobisDistanceThreshold = 2.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
+
+            mahalanobisDistanceThreshold = std::max(1.0, mahalanobisDistanceThreshold);
 
             // Calculate the mahalanobis distance using previous sigmas and target point values
             mahalanobisDistance = sqrt(pow(sensor_frame_x-target_point.x,2)/sigma_squared_x + pow(sensor_frame_y-target_point.y,2)/sigma_squared_y);
+            /*
             cout << "\n";
             cout << "Wall time: " << currentWallTime << "\n";
             cout << "Wall Time - Interval Time: " << currentWallTime-intervalTimeCount << "\n";
@@ -529,16 +540,26 @@ public:
             cout << "Multiplier total: " << exp(ceil((currentWallTime-intervalTimeCount)/0.5))*ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
             cout << "Threshold: " << mahalanobisDistanceThreshold << "\n";
             cout << "Distance: " << mahalanobisDistance << "\n";
+            */
+
 
             if (mahalanobisDistance < mahalanobisDistanceThreshold) {
                 // Convert the sensor frame point into the target frame
                 double target_frame_x;
                 double target_frame_y;
                 sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
-
+                /*
                 // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
                 // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
                 num_of_points_in_filter++;
+                */
+
+                if ((prior_points_x.size() < point_count) && (prior_points_y.size() < point_count)) {
+                    num_of_points_in_filter++;
+                } else {
+                    prior_points_x.erase(prior_points_x.begin());
+                    prior_points_y.erase(prior_points_y.begin());
+                }
 
                 prior_points_x.push_back(target_frame_x);
                 prior_points_y.push_back(target_frame_y);
@@ -559,12 +580,22 @@ public:
                 point_var_x /= num_of_points_in_filter;
                 point_var_y /= num_of_points_in_filter;
 
-                // Calculate new target point x value and sigma
+                // Calculate    new target point x value and sigma
+                /*
                 target_point.x = (sigma_squared_x*sensor_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
                 sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
 
                 // Calculate new target point y value
                 target_point.y = (sigma_squared_y*sensor_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+                */
+                sigma_squared_x = 1;
+                sigma_squared_y = 1;
+                target_point.x = (sigma_squared_x*mean_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+
+                // Calculate new target point y value
+                target_point.y = (sigma_squared_y*mean_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
                 sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
 
                 //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
@@ -575,17 +606,18 @@ public:
                 //}
 
                 intervalTimeCount = getWallTime();
+                interval_count++;
 
                 cout << "\n";
-                cout << num_of_points_in_filter << '\n';
+                cout << interval_count << '\n';
                 cout << "Roll Point x,y: " << sensor_frame_x << ", " << sensor_frame_y << "\n";
                 cout << "Target Point X,Y: " << target_point.x << ", " << target_point.y << "\n";
                 cout << "XXX Distance: " << mahalanobisDistance << "\n";
                 cout << "XXX Threshold: " << mahalanobisDistanceThreshold << "\n";
                 cout << "current sigma_squared_x: " << sigma_squared_x << '\n';
                 cout << "current sigma_squared_y: " << sigma_squared_y << '\n';
-                cout << "Target Point X: " << target_point.x << "\n";
-                cout << "Target Point Y: " << target_point.y << "\n";
+                cout << "Target Frame X: " << target_frame_x << "\n";
+                cout << "Target Frame Y: " << target_frame_y << "\n";
                 // imageTosensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
                 geometry_msgs::PointStamped cylinder_point;
                 cylinder_point.header = msg.header;
@@ -712,7 +744,7 @@ public:
             cyl_markers.markers.push_back(cyl_marker);
         }
 
-       // marker_pub.publish(cyl_markers);
+       //marker_pub.publish(cyl_markers);
         //==========================================================//
     }
 
