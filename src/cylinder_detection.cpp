@@ -206,6 +206,7 @@ public:
         // modes
         control_mode = 0; // start off with no controller operating
         available_control_modes.push_back(3);
+        available_control_modes.push_back(4);
         std::string message = "Available control_modes for [" + ros::this_node::getName() + "]: ";
         for (int i = 0; i < available_control_modes.size(); ++i) {
             char msg_buffer[10]; // increase size if more digits are needed

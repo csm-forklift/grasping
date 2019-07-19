@@ -142,8 +142,8 @@ class ManeuverPath:
         self.roll_pose_sub = rospy.Subscriber("/roll/pose", PoseStamped, self.rollCallback, queue_size=3)
         self.odom_sub = rospy.Subscriber("/odom", Odometry, self.odomCallback, queue_size=1)
         self.obstacle_path_sub = rospy.Subscriber("/obstacle_avoidance_path", Path, self.obstaclePathCallback, queue_size=1)
-        self.path1_pub = rospy.Publisher("~path1", PathWithGear, queue_size=3)
-        self.path2_pub = rospy.Publisher("~path2", PathWithGear, queue_size=3)
+        self.path1_pub = rospy.Publisher("~path1", PathWithGear, queue_size=3, latch=True)
+        self.path2_pub = rospy.Publisher("~path2", PathWithGear, queue_size=3, latch=True)
         self.approach_pose_pub = rospy.Publisher("/forklift/approach_pose", PoseStamped, queue_size=3)
         # indicates whether the optimzation completed successfully or not, to know whether the path is usable
         self.optimize_maneuver_srv = rospy.Service("~optimize_maneuver", OptimizeManeuver, self.optimizeManeuver)
@@ -649,30 +649,36 @@ class ManeuverPath:
             self.pose_s = Pose2D(x_s, y_s, theta_s)
             [self.pose_m, self.pose_f] = self.maneuverPoses(self.pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
 
+            # Initialize path messages
+            current_time = rospy.Time.now()
+            path1_msg = PathWithGear()
+            path2_msg = PathWithGear()
+            path1_msg.path.header.stamp = current_time
+            path1_msg.path.header.frame_id = "/odom"
+            path2_msg.path.header.stamp = current_time
+            path2_msg.path.header.frame_id = "/odom"
+
             # Publish first segment of maneuver
             path1 = self.maneuverSegmentPath(self.pose_s, r_1, alpha_1)
-            self.maneuver_path.path.header.stamp = rospy.Time.now()
-            self.maneuver_path.path.poses = []
             for i in range(len(path1)):
                 point = PoseStamped()
                 point.pose.position.x = path1[i][0]
                 point.pose.position.y = path1[i][1]
-                self.maneuver_path.path.poses.append(point)
-                # Set gear, positive alpha = forward gear
-                self.maneuver_path.gear = np.sign(alpha_1)
-            self.path1_pub.publish(self.maneuver_path)
+                path1_msg.path.poses.append(point)
+            # Set gear, positive alpha = forward gear
+            path1_msg.gear = np.sign(alpha_1)
+            self.path1_pub.publish(path1_msg)
 
             # Publish second segment of maneuver
             path2 = self.maneuverSegmentPath(self.pose_m, r_2, alpha_2)
-            self.maneuver_path.path.poses = []
             for i in range(len(path2)):
                 point = PoseStamped()
                 point.pose.position.x = path2[i][0]
                 point.pose.position.y = path2[i][1]
-                self.maneuver_path.path.poses.append(point)
-                # Set gear, positive alpha = forward gear
-                self.maneuver_path.gear = np.sign(alpha_2)
-            self.path2_pub.publish(self.maneuver_path)
+                path2_msg.path.poses.append(point)
+            # Set gear, positive alpha = forward gear
+            path2_msg.gear = np.sign(alpha_2)
+            self.path2_pub.publish(path2_msg)
 
             self.optimization_success = res.success
 
