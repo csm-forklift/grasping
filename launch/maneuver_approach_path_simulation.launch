@@ -13,7 +13,9 @@
     <!--===================-->
     <!-- Master Controller -->
     <!--===================-->
-    <node pkg="motion_testing" type="master_controller.py" name="master_controller" output="screen"/>
+    <node pkg="motion_testing" type="master_controller.py" name="master_controller" output="screen">
+        <param name="~debug_test" value="grasp" type="str"/>
+    </node>
 
     <!--============================-->
     <!-- Begin Turtlebot Simulation -->

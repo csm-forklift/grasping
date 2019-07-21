@@ -1,0 +1,78 @@
+<launch>
+
+    <!--==========================-->
+    <!-- Arguments and Parameters -->
+    <!--==========================-->
+    <arg name="debug" default="false"/>
+    <arg name="port_clamp" default="/dev/ttyACM0"/>
+    <arg name="clamp_scale" default="0.7"/>
+    <arg name="target_x" default="0.0"/>
+    <arg name="target_y" default="0.0"/>
+    <arg name="target_frame" default="/odom"/>
+    <arg name="grasp_angle" default="0.7854"/>
+    <arg name="angle_tolerance" default="0.01"/>
+    <arg name="K_angle" default="10.0"/>
+    <arg name="K_linear" default="1.0"/>
+    <arg name="max_velocity" default="0.25"/>
+    <arg name="grasp_plate_offset_x" default="0.36"/>
+    <arg name="grasp_plate_offset_y" default="-0.19"/>
+    <arg name="approach_offset" default="2.0"/>
+    <arg name="approach_tolerance" default="0.001"/>
+    <arg name="backout_distance" default="1.0"/>
+    <arg name="manual_deadman" default="4"/>
+    <arg name="autonomous_deadman" default="5"/>
+    <arg name="timeout" default="1.0"/>
+    <arg name="sensor_frame" default="/lidar1_link"/>
+    <arg name="point_cloud_topic" default="os1_node1/points"/>
+    
+    
+    <!--===============-->
+    <!-- Clamp Control -->
+    <!--===============-->
+    <!-- The arduino running this code should be a MEGA and should be running "grasping/src/clamp_switch/clamp_switch.ino", see file for wiring -->
+    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" output="screen" respawn="true">
+        <param name="port" value="$(arg port_clamp)" />
+    </node>
+    
+    <!-- Clamp Controller -->
+    <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
+        <param name="clamp_scale" value="$(arg clamp_scale)"/>
+        <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
+        <remap from="/clamp_control/clamp_grasp" to="/clamp_switch_node/clamp_grasp"/>
+    </node>
+    
+    <!--==================-->
+    <!-- Approach Control -->
+    <!--==================-->
+    <node pkg="grasping" name="approach_controller" type="approach_controller" output="screen">
+        <param name="target_x" value="$(arg target_x)"/>
+        <param name="target_y" value="$(arg target_y)"/>
+        <param name="grasp_angle" value="0.7854"/>
+        <param name="angle_tolerance" value="0.01"/>
+        <param name="K_angle" value="10.0"/>
+        <param name="K_linear" value="1.0"/>
+        <param name="max_velocity" value="0.25"/>
+        <param name="grasp_plate_offset_x" value="0.36"/>
+        <param name="grasp_plate_offset_y" value="-0.19"/>
+        <param name="approach_offset" value="2.0"/>
+        <param name="approach_tolerance" value="0.001"/>
+        <param name="backout_distance" value="1.0"/>
+        <param name="manual_deadman" value="4"/>
+        <param name="autonomous_deadman" value="5"/>
+        <param name="timeout" value="1.0"/>
+        <remap from="/approach_controller/point" to="/cylinder_detection/point"/>
+    </node>
+    
+    <!--====================-->
+    <!-- Cylinder Detection -->
+    <!--====================-->
+    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" output="screen">
+        <param name="debug" value="$(arg debug)"/>
+        <param name="sensor_frame" value="/lidar1_link"/>
+        <param name="point_cloud_topic" value="/os1_node1/points"/>
+        <param name="target_frame" value="/odom"/>
+        <param name="target_x" value="$(arg target_x)"/>
+        <param name="target_y" value="$(arg target_y)"/>
+    </node>
+    
+</launch>

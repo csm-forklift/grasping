@@ -1,12 +1,14 @@
 #include <iostream>
 #include <vector>
 #include <algorithm> // std::find
+#include <sys/time.h>
 #include <ros/ros.h>
 #include <signal.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/Int8.h>
 #include <std_msgs/Int16.h>
+#include <sensor_msgs/Joy.h>
 
 class ClampControl
 {
@@ -22,9 +24,12 @@ private:
 	ros::Subscriber limit_switch_close_sub;
 	ros::Subscriber force_sub;
 	ros::Subscriber stretch_sub;
+    ros::Subscriber joystick_override_sub;
 
     ros::Publisher clamp_movement_pub;
     ros::Publisher clamp_grasp_pub;
+    static ros::Publisher clamp_movement_pub_global;
+    static ros::Publisher clamp_grasp_pub_global;
 
 	ros::Publisher clamp_plate_status_pub;
 	ros::Publisher grasp_status_pub;
@@ -49,13 +54,27 @@ private:
     int window_size = 10;
     std::vector<float> stretch_window;
 
+    // Joystick Controller Variables
+    double timeout, timeout_start;
+    int autonomous_deadman_button, manual_deadman_button;
+    bool autonomous_deadman_on, manual_deadman_on; // deadman switch
+
 public:
 	ClampControl() : nh(""), nh_("~")
 	{
         // Set parameters
         nh_.param<double>("clamp_scale", clamp_scale, 0.5);
+        nh_.param("manual_deadman", manual_deadman_button, 4);
+        nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
+        nh_.param("timeout", timeout, 1.0);
 
         std::cout << "Clamp scale: " << clamp_scale << '\n';
+
+        clamp_movement_pub = nh_.advertise<std_msgs::Float32>("clamp_movement", 1);
+        clamp_grasp_pub = nh_.advertise<std_msgs::Float32>("clamp_grasp", 1);
+		clamp_plate_status_pub = nh_.advertise<std_msgs::Bool>("clamp_plate_status", 1);
+		grasp_status_pub = nh_.advertise<std_msgs::Bool>("grasp_status", 1, true);
+        grasp_finished_pub = nh_.advertise<std_msgs::Bool>("grasp_finished", 1, true); // latched, meaning it waits for subscribers to send a message
 
 		// to be subscribed to the controller for operation
 		control_mode_sub = nh.subscribe<std_msgs::Int8> ("/control_mode", 1, &ClampControl::controlModeCallback, this);
@@ -66,13 +85,7 @@ public:
 		limit_switch_close_sub = nh.subscribe<std_msgs::Bool> ("switch_status_close", 1, &ClampControl::limit_close_Callback, this);
 		force_sub = nh.subscribe<std_msgs::Int16> ("force", 1, &ClampControl::force_Callback, this);
 		stretch_sub = nh.subscribe<std_msgs::Float32> ("stretch_length", 1, &ClampControl::stretch_Callback, this);
-
-        clamp_movement_pub = nh_.advertise<std_msgs::Float32>("clamp_movement", 1);
-        clamp_grasp_pub = nh_.advertise<std_msgs::Float32>("clamp_grasp", 1);
-
-		clamp_plate_status_pub = nh_.advertise<std_msgs::Bool>("clamp_plate_status", 1);
-		grasp_status_pub = nh_.advertise<std_msgs::Bool>("grasp_status", 1, true);
-        grasp_finished_pub = nh_.advertise<std_msgs::Bool>("grasp_finished", 1, true); // latched, meaning it waits for subscribers to send a message
+        joystick_override_sub = nh_.subscribe("/joy", 1, &ClampControl::joy_override, this);
 
         //signal(SIGINT, ClampControl::shutdownHandler);
 
@@ -98,6 +111,11 @@ public:
             }
         }
         ROS_INFO("%s", message.c_str());
+
+        // Initialize joystick variables
+        timeout_start = getWallTime();
+        autonomous_deadman_on = false;
+        manual_deadman_on = false;
 	}
 
 
@@ -155,17 +173,44 @@ public:
 		control_mode = msg -> data;
 	}
 
-    void shutdownHandler(int sig)
+    void joy_override(const sensor_msgs::Joy::ConstPtr& msg)
     {
-        // Stop motion before shutting down
+        // Update timeout time
+        timeout_start = getWallTime();
+
+        // Update deadman buttons
+        if (msg->buttons[manual_deadman_button] == 1) {
+            manual_deadman_on = true;
+        }
+		else {
+            manual_deadman_on = false;
+        }
+
+        if (msg->buttons[autonomous_deadman_button] == 1) {
+            autonomous_deadman_on = true;
+        }
+		else {
+            autonomous_deadman_on = false;
+        }
+    }
+
+    void publishStopCommand()
+    {
+        // Stop motion
         std_msgs::Float32 clamp_movement_msg;
     	std_msgs::Float32 clamp_grasp_msg;
         clamp_movement_msg.data = 0.0;
         clamp_grasp_msg.data = 0.0;
         clamp_movement_pub.publish(clamp_movement_msg);
     	clamp_grasp_pub.publish(clamp_grasp_msg);
+    }
 
-        ros::shutdown();
+    double getWallTime() {
+        struct timeval time;
+        if (gettimeofday(&time, NULL)) {
+            return 0;
+        }
+        return (double)time.tv_sec + (double)time.tv_usec*0.000001;
     }
 };
 
@@ -344,31 +389,65 @@ void ClampControl::controller()
 	std_msgs::Float32 clamp_grasp_msg;
 	std_msgs::Bool clamp_plate_status_msg;
 
+    if (manual_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+        // Send no command
+    }
+    else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+        // Send clamp control commands
+        clamp_movement_msg.data = clamp_movement;
+    	clamp_grasp_msg.data = clamp_grasp;
+        clamp_movement_pub.publish(clamp_movement_msg);
+    	clamp_grasp_pub.publish(clamp_grasp_msg);
+    }
+    else {
+        // Joystick has timed out, send 0 velocity commands for clamp
+        clamp_movement_msg.data = 0;
+    	clamp_grasp_msg.data = 0;
+        clamp_movement_pub.publish(clamp_movement_msg);
+    	clamp_grasp_pub.publish(clamp_grasp_msg);
+    }
 
-	clamp_movement_msg.data = clamp_movement;
-	clamp_grasp_msg.data = clamp_grasp;
-	clamp_plate_status_msg.data = clamp_plate_status;
-
-
-	clamp_movement_pub.publish(clamp_movement_msg);
-	clamp_grasp_pub.publish(clamp_grasp_msg);
-	clamp_plate_status_pub.publish(clamp_plate_status_msg);
+    // Stretch sensor status can be sent everytime
+    clamp_plate_status_msg.data = clamp_plate_status;
+    clamp_plate_status_pub.publish(clamp_plate_status_msg);
 }
 
+//============================================================================//
+// Need Global pointer to use with ROS shutdown callback
+//============================================================================//
+ClampControl* clamp_control;
+
+void myShutdown(int sig)
+{
+    // DEBUG:
+    ROS_INFO("[%s]: Stopping clamp movement\n", ros::this_node::getName().c_str());
+
+    // Stop motion before shutting down
+    clamp_control->publishStopCommand();
+
+    ros::shutdown();
+}
 
 int main(int argc, char **argv)
 {
-	ros::init(argc, argv, "clamp_control");
+	//ros::init(argc, argv, "clamp_control");
     ros::init(argc, argv, "clamp_control", ros::init_options::NoSigintHandler);
 
-	ClampControl clamp_control;
+	//ClampControl clamp_control;
+    clamp_control = new ClampControl();
+
+    signal(SIGINT, &myShutdown);
 
 	ros::Rate rate(30);
 	while (ros::ok())
 	{
-		clamp_control.controller();
+		//clamp_control.controller();
+        clamp_control->controller();
 		ros::spinOnce();
 		rate.sleep();
 	}
+
+    delete clamp_control;
+
 	return 0;
 }
