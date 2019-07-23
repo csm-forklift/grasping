@@ -32,16 +32,7 @@
 #include <std_msgs/Float32.h>
 #include <std_msgs/Int16.h>
 
-<<<<<<< HEAD
-std_msgs::Int16 force_msg;
-std_msgs::Bool switch_up_msg;
-std_msgs::Bool switch_down_msg;
-std_msgs::Bool switch_open_msg;
-std_msgs::Bool switch_close_msg;
-std_msgs::Float32 stretch_msg;
 
-=======
->>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 void switchCallback(const std_msgs::Bool&);
 void clampmovementCallback(const std_msgs::Float32&);
 void clampgraspCallback(const std_msgs::Float32&);
@@ -92,15 +83,11 @@ ros::NodeHandle nh;
 std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
+std_msgs::Bool switch_close_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
-<<<<<<< HEAD
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
-=======
-std_msgs::Int16 debug_msg;
-ros::Publisher debug_pub("debug", &debug_msg);
->>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -133,14 +120,10 @@ void setup()
   digitalWrite(led,HIGH);
   nh.advertise(limit_switch_open_pub);
 
-<<<<<<< HEAD
   pinMode(limit_switch_close, INPUT);
   pinMode(led, OUTPUT);
   digitalWrite(led, HIGH);
   nh.advertise(limit_switch_close_pub);
-=======
-  nh.advertise(debug_pub);
->>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 
   // FSR
   nh.advertise(force_pub);
@@ -213,7 +196,6 @@ void loop()
   }
   switch_open_msg.data = switch_status_open;
   limit_switch_open_pub.publish(&switch_open_msg);
-<<<<<<< HEAD
 
   // Close
   if (digitalRead(limit_switch_close) == LOW)
@@ -228,9 +210,6 @@ void loop()
   }
   switch_close_msg.data = switch_status_close;
   limit_switch_close_pub.publish(&switch_close_msg);
-=======
-  delay(10);
->>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
   
   // FSR
   fsrReading = analogRead(fsrPin);
@@ -283,10 +262,6 @@ void loop()
     {
       int pwm_signal_move_1 = map(100*clamp_movement, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_move_2 = map(100*clamp_movement, -100, 100, PWM_MAX_2, PWM_MIN_2);
-
-      debug_msg.data = int16_t(pwm_signal_move_1);
-      debug_pub.publish(debug_msg.data);
-      delay(10);
 
       analogWrite(SIGNAL_PIN_1, pwm_signal_move_1);
       analogWrite(SIGNAL_PIN_2, pwm_signal_move_2);
