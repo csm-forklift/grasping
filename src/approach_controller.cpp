@@ -1,7 +1,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <cmath>
-#include <algorithm>
+#include <algorithm> // min, max, find
 #include <ros/ros.h>
 #include <geometry_msgs/PointStamped.h>
 #include <nav_msgs/Odometry.h>
@@ -21,11 +21,11 @@ private:
     //===== ROS Objects =====//
     // Publishers and Subscribers
     ros::NodeHandle nh_;
+    ros::Subscriber control_mode_sub; // reads the current controller mode
     ros::Subscriber stretch_sensor_sub; // reads boolean indicating whether the stretch sensor is over the threshold or not
     ros::Subscriber odom_sub; // read the forklifts current pose from the odom message
     ros::Subscriber roll_sub; // read paper roll's current pose
     ros::Subscriber grasp_success_sub; // reads whether the grasp was sucessful or not
-    ros::Subscriber control_sub; // reads the control mode
     ros::Subscriber steering_angle_sub;
     ros::Subscriber joystick_override_sub;
     ros::Publisher velocity_pub; // publish linear velocity command
@@ -85,6 +85,7 @@ private:
     // Operational State
     int operation_mode; // 0 = get to starting angle, 1 = approach roll, 2 = back out for retry
     int control_mode; // determines whether this controller is active or not
+    vector<int> available_control_modes; // a vector of integers representing which values 'control_mode' can be and allow this controller to operate
 
     // Joystick Controller Variables
     double timeout, timeout_start;
@@ -118,13 +119,14 @@ public:
         nh_.param("timeout", timeout, 1.0);
 
         // Create publishers and subscribers
+        control_mode_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
         stretch_sensor_sub = nh_.subscribe("/clamp_control/stretch", 1, &ApproachController::stretchSensorCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
-        control_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
         steering_angle_sub = nh_.subscribe("/steering_node/filtered_angle", 1, &ApproachController::steeringAngleCallback, this);
         joystick_override_sub = nh_.subscribe("/joy", 1, &ApproachController::joy_override, this);
+
         velocity_pub = nh_.advertise<std_msgs::Float64>("/velocity_node/velocity_setpoint", 1);
         steering_angle_pub = nh_.advertise<std_msgs::Float64>("/steering_node/angle_setpoint", 1);
 
@@ -148,6 +150,24 @@ public:
         operation_mode = 0;
         control_mode = 0;
 
+        //===== Print out possible values for control mode =====//
+        // Pushback more numbers to allow this controller to operate in more
+        // modes
+        available_control_modes.push_back(3);
+        string message = "Available control_modes for [" + ros::this_node::getName() + "]: ";
+        for (int i = 0; i < available_control_modes.size(); ++i) {
+            char msg_buffer[10]; // increase size if more digits are needed
+            sprintf(msg_buffer, "%d", available_control_modes.at(i));
+            message += msg_buffer;
+            if (i != available_control_modes.size() - 1) {
+                message += ", ";
+            }
+            else {
+                message += '\n';
+            }
+        }
+        ROS_INFO("%s", message.c_str());
+
         // Initialize joystick variables
         timeout_start = getWallTime();
         autonomous_deadman_on = false;
@@ -158,7 +178,7 @@ public:
     {
         while (nh_.ok()) {
             // TODO: add 'if' statements around the publishers to make sure they do not publish if the control_mode is wrong
-            if (control_mode == 2) {
+            if (checkControlMode(control_mode, available_control_modes)) {
                 // TODO: add logic that checks if the clamp is lowered and open before beginning.
                 if (operation_mode == 0) {
                     // DEBUG:
@@ -198,6 +218,10 @@ public:
             // Publish the new steering angle and velocity
             publishMessages();
             ros::spinOnce();
+
+            if (!checkControlMode(control_mode, available_control_modes)) {
+                break;
+            }
         }
 
         // Change operation mode to "approach"
@@ -277,6 +301,9 @@ public:
             if (operation_mode != 1) {
                 break;
             }
+            if (!checkControlMode(control_mode, available_control_modes)) {
+                break;
+            }
         }
 
         // Stop velocity
@@ -308,6 +335,10 @@ public:
             publishMessages();
 
             ros::spinOnce();
+
+            if (!checkControlMode(control_mode, available_control_modes)) {
+                break;
+            }
         }
 
         // Return to approach operation mode
@@ -441,6 +472,19 @@ public:
             std_msgs::Float64 velocity_msg;
             velocity_msg.data = 0.0;
             velocity_pub.publish(velocity_msg);
+        }
+    }
+
+    bool checkControlMode(int mode, vector<int> vector_of_modes)
+    {
+        // Use 'find' on the vector to determine existence of 'mode'
+        vector<int>::iterator it;
+        it = find(vector_of_modes.begin(), vector_of_modes.end(), mode);
+        if (it != vector_of_modes.end()) {
+            return true;
+        }
+        else {
+            return false;
         }
     }
 };

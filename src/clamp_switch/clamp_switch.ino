@@ -32,6 +32,7 @@
 #include <std_msgs/Float32.h>
 #include <std_msgs/Int16.h>
 
+<<<<<<< HEAD
 std_msgs::Int16 force_msg;
 std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
@@ -39,6 +40,8 @@ std_msgs::Bool switch_open_msg;
 std_msgs::Bool switch_close_msg;
 std_msgs::Float32 stretch_msg;
 
+=======
+>>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 void switchCallback(const std_msgs::Bool&);
 void clampmovementCallback(const std_msgs::Float32&);
 void clampgraspCallback(const std_msgs::Float32&);
@@ -57,7 +60,7 @@ bool switch_status_close;
 
 // Force Sensitive Resistor
 int fsrPin = 0;
-int fsrReading;
+int16_t fsrReading;
 
 // Stretch sensor
 int stretch_sensor_1_pin = 1;
@@ -86,15 +89,25 @@ float clamp_grasp;
 ros::NodeHandle nh;
 
 // Limit switch
+std_msgs::Bool switch_up_msg;
+std_msgs::Bool switch_down_msg;
+std_msgs::Bool switch_open_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
+<<<<<<< HEAD
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
+=======
+std_msgs::Int16 debug_msg;
+ros::Publisher debug_pub("debug", &debug_msg);
+>>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 
 // FSR
+std_msgs::Int16 force_msg;
 ros::Publisher force_pub("force", &force_msg);
 
 // Stretch sensor
+std_msgs::Float32 stretch_msg;
 ros::Publisher stretch_sensor_pub("stretch_length", &stretch_msg);
 
 // Clamp switch 
@@ -104,7 +117,6 @@ ros::Subscriber<std_msgs::Float32> clamp_grasp_sub("clamp_switch_node/clamp_gras
 //
 void setup() 
 {
-  Serial.begin(57600);
   nh.initNode();
   
   // Limit switch
@@ -114,19 +126,21 @@ void setup()
   nh.advertise(limit_switch_up_pub);
 
   pinMode(limit_switch_down, INPUT);
-  pinMode(led, OUTPUT);
   digitalWrite(led,HIGH);
   nh.advertise(limit_switch_down_pub);
 
   pinMode(limit_switch_open, INPUT);
-  pinMode(led, OUTPUT);
   digitalWrite(led,HIGH);
   nh.advertise(limit_switch_open_pub);
 
+<<<<<<< HEAD
   pinMode(limit_switch_close, INPUT);
   pinMode(led, OUTPUT);
   digitalWrite(led, HIGH);
   nh.advertise(limit_switch_close_pub);
+=======
+  nh.advertise(debug_pub);
+>>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
 
   // FSR
   nh.advertise(force_pub);
@@ -148,6 +162,8 @@ void setup()
   analogWrite(SIGNAL_PIN_2, PWM_MIDDLE_2);
   analogWrite(SIGNAL_PIN_3, PWM_MIDDLE_1);
   analogWrite(SIGNAL_PIN_4, PWM_MIDDLE_2);
+
+  Serial.begin(19200);
 }
 
 void loop() 
@@ -167,6 +183,7 @@ void loop()
   }
   switch_up_msg.data = switch_status_up;
   limit_switch_up_pub.publish(&switch_up_msg);
+  delay(10);
 
   // Down
   if (digitalRead(limit_switch_down) == LOW)
@@ -181,6 +198,7 @@ void loop()
   }
   switch_down_msg.data = switch_status_down;
   limit_switch_down_pub.publish(&switch_down_msg);
+  delay(10);
 
   // Open
   if (digitalRead(limit_switch_open) == LOW)
@@ -195,6 +213,7 @@ void loop()
   }
   switch_open_msg.data = switch_status_open;
   limit_switch_open_pub.publish(&switch_open_msg);
+<<<<<<< HEAD
 
   // Close
   if (digitalRead(limit_switch_close) == LOW)
@@ -209,11 +228,15 @@ void loop()
   }
   switch_close_msg.data = switch_status_close;
   limit_switch_close_pub.publish(&switch_close_msg);
+=======
+  delay(10);
+>>>>>>> 09135fdf25066ab4acbfb7dca833b23923c7bc7a
   
   // FSR
   fsrReading = analogRead(fsrPin);
   force_msg.data = fsrReading;
   force_pub.publish(&force_msg);
+  delay(10);
 
   // Stretch sensor
   float stretch_value;
@@ -248,6 +271,7 @@ void loop()
   
   stretch_msg.data = stretch_value;
   stretch_sensor_pub.publish( &stretch_msg );
+  delay(10);
   
   // Clamp switch control
 
@@ -259,6 +283,10 @@ void loop()
     {
       int pwm_signal_move_1 = map(100*clamp_movement, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_move_2 = map(100*clamp_movement, -100, 100, PWM_MAX_2, PWM_MIN_2);
+
+      debug_msg.data = int16_t(pwm_signal_move_1);
+      debug_pub.publish(debug_msg.data);
+      delay(10);
 
       analogWrite(SIGNAL_PIN_1, pwm_signal_move_1);
       analogWrite(SIGNAL_PIN_2, pwm_signal_move_2);
@@ -329,7 +357,7 @@ void loop()
   }
   
   nh.spinOnce();
-  delay(1);
+  delay(100);
 }
 
 // Clamp switch

@@ -1,19 +1,21 @@
 <!-- Starts cylinder detection with a lidar -->
 <launch>
     <!-- Prints output messages to screen for all nodes -->
-    <arg name="debug" default="false" />
+    <arg name="debug" default="true" />
     <arg name="display_image" default="false" />
     <arg name="depth_registration" default="false" />    
-    <arg name="camera" default="os1" />
+    <arg name="sensor" default="os1" />
 
+    <!--
     <include file="$(find ouster_ros)/launch/lidar2.launch">
+    -->
     <include file="$(find ouster_ros)/launch/lidar1.launch">
 
         <arg name="respawn" value="true" />
     </include>
     <node pkg="tf"
           type = "static_transform_publisher"
-          name = "camera_broadcaster"
+          name = "os1_broadcaster"
           args = "0.150 0.010 0.155 0 0 0 1 base_link os1 50" /> 
     
     <!-- Cylinder Detection Node -->
@@ -21,7 +23,8 @@
         <remap from="/os1/depth/points" to="/os1_node1/points" />
         <param name="debug" value="$(arg debug)" />
         <param name="display_image" value="$(arg display_image)" />
-        <param name="camera" value="$(arg camera)" />
+        <param name="sensor" value="$(arg sensor)" />
+        <param name="sensor_frame" value="os1" />
         <param name="target_frame" value="base_link" />
         <param name="target_x" value="0.0" />
         <param name="target_y" value="1.0" />

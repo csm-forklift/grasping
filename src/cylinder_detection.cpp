@@ -33,6 +33,7 @@
 #include <limits.h>
 #include <sys/time.h>
 #include <ros/ros.h>
+#include <std_msgs/Int8.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/PointStamped.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -47,6 +48,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl_ros/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <vector>
 
 
 // Define the pointtype used with PointCloud data
@@ -61,6 +63,7 @@ private:
     //===== ROS Objects
     ros::NodeHandle nh_;
     ros::Subscriber pc_sub; // subscribes to pointcloud data
+    ros::Subscriber control_mode_sub; // reads the current control mode set by the master controller
     ros::Publisher cyl_pub; // publish the position of the cylinder as a pose
     ros::Publisher marker_pub; // publish cylinder marker
     ros::Publisher pc_debug_pub; // publish filtered pointcloud for debugging
@@ -71,6 +74,9 @@ private:
     std::string target_frame;
     std::string right_rotation_frame;
     std::string left_rotation_frame;
+    int control_mode; // this node publishes only when this variable is a specific value
+    std::vector<int> available_control_modes; // vector of possible numbers the 'control_mode' can be to turn this node on
+    bool debug; // turns on some debugging features
 
     //===== Tuning Paramters
     float max_distance_x; // m
@@ -107,6 +113,7 @@ private:
     bool use_variance_filter; // filters points based off the variance calculated using points within the vicinity of the expected circle
     bool use_location_filter; // Rejects all points which do not lie near the desired goal location (this should return only one point at most)
     int num_of_points_in_filter =1; // For memory update points, need to start at 1 since we have a temp target point
+    int interval_count = 1;
     std::vector<double> prior_points_x; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     std::vector<double> prior_points_y; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     double sigma_squared_x =1, sigma_squared_y=1;
@@ -170,7 +177,7 @@ public:
     translation(0, 0, 0),
     rotation(1, 0, 0, 0) // w, x, y, z
     {
-        // Load Parameters
+        //===== Load Parameters =====//
         nh_.param<std::string>("sensor", sensor_name, "sensor");
         nh_.param<std::string>("sensor_frame", sensor_frame, sensor_name + "_link");
         nh_.param<std::string>("point_cloud_topic", point_topic, "/"+sensor_name+"/depth/points");
@@ -179,16 +186,40 @@ public:
         nh_.param<double>("target_y", target_point.y, 0.0);
         nh_.param<double>("/roll/radius", circle_radius, 0.200);
         nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
+        nh_.param<bool>("debug", debug, false);
 
-        // ROS Objects
+        //===== ROS Objects =====//
         //sensor_frame.insert(0, "/"); // sensor is assumed to be level with the ground, this frame must one where Z is up
         //target_frame.insert(0, "/"); // this frame should have the Z axis pointing upward
         ROS_INFO("Reading depth points from: %s", point_topic.c_str());
         ROS_INFO("Transforming cloud to '%s' frame", sensor_frame.c_str());
         pc_sub = nh_.subscribe(point_topic.c_str(), 1, &CylinderDetector::pcCallback, this);
+        control_mode_sub = nh_.subscribe("/control_mode", 1, &CylinderDetector::controlModeCallback, this);
         cyl_pub = nh_.advertise<geometry_msgs::PointStamped>("point", 1);
         marker_pub = nh_.advertise<visualization_msgs::MarkerArray>("markers", 1);
-        pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
+        if (debug) {
+            pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
+        }
+
+        //===== Print out possible values for control mode =====//
+        // Pushback more numbers to allow this controller to operate in more
+        // modes
+        control_mode = 0; // start off with no controller operating
+        available_control_modes.push_back(3);
+        available_control_modes.push_back(4);
+        std::string message = "Available control_modes for [" + ros::this_node::getName() + "]: ";
+        for (int i = 0; i < available_control_modes.size(); ++i) {
+            char msg_buffer[10]; // increase size if more digits are needed
+            sprintf(msg_buffer, "%d", available_control_modes.at(i));
+            message += msg_buffer;
+            if (i != available_control_modes.size() - 1) {
+                message += ", ";
+            }
+            else {
+                message += '\n';
+            }
+        }
+        ROS_INFO("%s", message.c_str());
 
         //===== Tuning Paramters =====//
         // These parameters are all based on the sensor link frame (where Z axis is up)
@@ -232,383 +263,508 @@ public:
         //=============================//
     }
 
+    void controlModeCallback(const std_msgs::Int8 &msg)
+    {
+        control_mode = msg.data;
+    }
+
     void pcCallback(const sensor_msgs::PointCloud2 &msg)
     {
-        //===== Convert PointCloud and Transform Data =====//
-        // Convert ROS PointCloud2 message into PCL pointcloud
-        rosMsgToPCL(msg, scene_cloud_optical_frame);
+        if (checkControlMode(control_mode, available_control_modes)) {
+            //===== Convert PointCloud and Transform Data =====//
+            // Convert ROS PointCloud2 message into PCL pointcloud
+            rosMsgToPCL(msg, scene_cloud_optical_frame);
 
-        // Transform pointcloud into sensor frame
-        transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, sensor_frame);
+            // Transform pointcloud into sensor frame
+            transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, sensor_frame);
 
-        // Get the bounds of the point cloud
-        pcl::getMinMax3D(*scene_cloud_unfiltered, min_pt, max_pt);
-        x_max = max_pt.x;
-        x_min = min_pt.x;
-        y_max = max_pt.y;
-        y_min = min_pt.y;
-        z_max = max_pt.z;
-        z_min = min_pt.z;
+            // Get the bounds of the point cloud
+            pcl::getMinMax3D(*scene_cloud_unfiltered, min_pt, max_pt);
+            x_max = max_pt.x;
+            x_min = min_pt.x;
+            y_max = max_pt.y;
+            y_min = min_pt.y;
+            z_max = max_pt.z;
+            z_min = min_pt.z;
 
-        // // DEBUG: Print bounds
-        // std::cout << "Bounds [min, max]: \n";
-        // std::cout << "x: [" << x_min << ", " << x_max << "]\n";
-        // std::cout << "y: [" << y_min << ", " << y_max << "]\n";
-        // std::cout << "z: [" << z_min << ", " << z_max << "]\n";
-        // std::cout << std::endl;
-        //=================================================//
+            // // DEBUG: Print bounds
+            // std::cout << "Bounds [min, max]: \n";
+            // std::cout << "x: [" << x_min << ", " << x_max << "]\n";
+            // std::cout << "y: [" << y_min << ", " << y_max << "]\n";
+            // std::cout << "z: [" << z_min << ", " << z_max << "]\n";
+            // std::cout << std::endl;
+            //=================================================//
 
-        //===== Preprocessing (filter, segment, etc.) =====//
-        // Try to remove the ground layer (find the minimum z level and remove a few centimeters up)
-        pcl::PassThrough<PointT> pass; // passthrough filter
-        pass.setInputCloud(scene_cloud_unfiltered);
-        pass.setFilterFieldName("z");
-        pass.setFilterLimits(filter_z_low, filter_z_high);
+            //===== Preprocessing (filter, segment, etc.) =====//
+            // Try to remove the ground layer (find the minimum z level and remove a few centimeters up)
+            pcl::PassThrough<PointT> pass; // passthrough filter
+            pass.setInputCloud(scene_cloud_unfiltered);
+            pass.setFilterFieldName("z");
+            pass.setFilterLimits(filter_z_low, filter_z_high);
 
-        pass.filter(*scene_cloud_z_filter_frame);
+            pass.filter(*scene_cloud_z_filter_frame);
 
-        // PERFORM TRANSFORM FOR RIGHT ROTATION
-        // Transform frame to minimum view angle in order to remove all points in the negative x range
-        // Degrees are first variable of thetas. modify for desired angles of view off of center line
-        theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
-        theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
-        phi_min = (M_PI/2) - theta_min;
-        phi_max = (M_PI/2) - theta_max;
+            // PERFORM TRANSFORM FOR RIGHT ROTATION
+            // Transform frame to minimum view angle in order to remove all points in the negative x range
+            // Degrees are first variable of thetas. modify for desired angles of view off of center line
+            theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
+            theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
+            phi_min = (M_PI/2) - theta_min;
+            phi_max = (M_PI/2) - theta_max;
 
-        translation.x() = 0.0;
-        translation.y() = 0.0;
-        translation.z() = 0.0;
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
 
-        rotation = Eigen::AngleAxisf(-1*phi_min, Eigen::Vector3f::UnitZ());
+            rotation = Eigen::AngleAxisf(-1*phi_min, Eigen::Vector3f::UnitZ());
 
-        pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, rotation);
+            pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, rotation);
 
-        // Filter all points to the right of minimum view angle
-        pass.setInputCloud(scene_cloud_right_adjustment_frame);
-        pass.setFilterFieldName("x");
-        pass.setFilterLimits(0.0, 120.0);
+            // Filter all points to the right of minimum view angle
+            pass.setInputCloud(scene_cloud_right_adjustment_frame);
+            pass.setFilterFieldName("x");
+            pass.setFilterLimits(0.0, 120.0);
 
-        //pcl::copyPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud);
+            //pcl::copyPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud);
 
-        pass.filter(*scene_cloud_right_adjustment_frame);
+            pass.filter(*scene_cloud_right_adjustment_frame);
 
-        // PERFORM TRANSFORM FOR LEFT ROTATION
-        // Transform frame to maximum view angle in order to remove all points in the negative x range
-        translation.x() = 0.0;
-        translation.y() = 0.0;
-        translation.z() = 0.0;
+            // PERFORM TRANSFORM FOR LEFT ROTATION
+            // Transform frame to maximum view angle in order to remove all points in the negative x range
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
 
-        rotation = Eigen::AngleAxisf((phi_min+phi_max), Eigen::Vector3f::UnitZ());
+            rotation = Eigen::AngleAxisf((phi_min+phi_max), Eigen::Vector3f::UnitZ());
 
-        pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, rotation);
+            pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, rotation);
 
-        // Filter all points to the left of minimum view angle
-        pass.setInputCloud(scene_cloud_left_adjustment_frame);
-        pass.setFilterFieldName("x");
-        pass.setFilterLimits(0.0, 120.0);
+            // Filter all points to the left of minimum view angle
+            pass.setInputCloud(scene_cloud_left_adjustment_frame);
+            pass.setFilterFieldName("x");
+            pass.setFilterLimits(0.0, 120.0);
 
-        pass.filter(*scene_cloud_left_adjustment_frame);
+            pass.filter(*scene_cloud_left_adjustment_frame);
 
-        //PERFORM TRANSFROM TO ORIGINAL VIEW ORIENTATION
-        // Transform frame back to original orientation to put in center of remaining view window
-        translation.x() = 0.0;
-        translation.y() = 0.0;
-        translation.z() = 0.0;
+            //PERFORM TRANSFROM TO ORIGINAL VIEW ORIENTATION
+            // Transform frame back to original orientation to put in center of remaining view window
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
 
-        rotation = Eigen::AngleAxisf(-1*phi_max, Eigen::Vector3f::UnitZ());
+            rotation = Eigen::AngleAxisf(-1*phi_max, Eigen::Vector3f::UnitZ());
 
-        pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
-        /*
-        // Debug
-        translation.x() = 0.0;
-        translation.y() = 0.0;
-        translation.z() = 0.0;
+            pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+            /*
+            // Debug
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
 
-        rotation = Eigen::AngleAxisf(phi_min, Eigen::Vector3f::UnitZ());
+            rotation = Eigen::AngleAxisf(phi_min, Eigen::Vector3f::UnitZ());
 
-        pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
-        //scene_cloud->header.frame_id = sensor_frame;
-        */
-        // Unnecessary filter required to apply transform????
-        pass.setInputCloud(scene_cloud);
-        pass.setFilterFieldName("z");
-        pass.setFilterLimits(-120.0, 120.0);
+            pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+            //scene_cloud->header.frame_id = sensor_frame;
+            */
+            // Unnecessary filter required to apply transform????
+            pass.setInputCloud(scene_cloud);
+            pass.setFilterFieldName("z");
+            pass.setFilterLimits(-120.0, 120.0);
 
-        pass.filter(*scene_cloud);
+            pass.filter(*scene_cloud);
 
-        // TODO: filter point cloud based on angle
-        /* Process
-         * Rotate so that cutoff angle is parallel to the Y axis.
-         * Filter negative X points
-         * Rotate so the other cutoff angle is parallel to the Y axis
-         * Filter negativ X points
-         * Rotate back to original angle
-         */
+            // TODO: filter point cloud based on angle
+            /* Process
+             * Rotate so that cutoff angle is parallel to the Y axis.
+             * Filter negative X points
+             * Rotate so the other cutoff angle is parallel to the Y axis
+             * Filter negativ X points
+             * Rotate back to original angle
+             */
 
-        // DEBUG: Publish filtered pointcloud
-        sensor_msgs::PointCloud2 pc_msg;
-        pclToROSMsg(scene_cloud, pc_msg);
-        pc_debug_pub.publish(pc_msg);
-
-        // If final pointcloud contains no points, exit the callback
-        if (scene_cloud->size() == 0) {
-            return;
-        }
-        //=================================================//
-
-        //===== Generate 2D Image =====//
-        // Determine the grid size based on the desired resolution
-        x_range = x_max - x_min;
-        y_range = y_max - y_min;
-
-        if (!std::isfinite(x_range)) {
-            x_range = 0;
-        }
-        if (!std::isfinite(y_range)) {
-            y_range = 0;
-        }
-
-        // Remember that transforming from sensor frame to the image frame mirrors the axes, so x pixels depend on the y range and vis-versa
-        x_pixels = round(y_range * resolution);
-        y_pixels = round(x_range * resolution);
-        x_pixel_delta = (y_range / x_pixels); // length of each pixel in image frame 'x' direction
-        y_pixel_delta = (x_range / y_pixels); // length of each pixel in image frame 'y' direction
-
-        // Calculate mirrored points for y-values in sensor frame (x direction in image frame)
-        y_mirror_min = -y_max;
-        y_mirror_max = -y_min;
-
-        // Convert points into 2D image and display
-        top_image = cv::Mat::zeros(y_pixels, x_pixels, CV_8U); // first index is rows which represent the y dimension of the image
-
-        for (int i = 0; i < scene_cloud->size(); ++i) {
-            // Transform sensor points to image indices
-            int x_index;
-            int y_index;
-            sensorToImage(scene_cloud->points[i].x, scene_cloud->points[i].y, x_index, y_index);
-
-            // Check that the values are within bounds
-            if (x_index >= 0 && x_index <= (x_pixels - 1) && y_index >= 0 && y_index <= (y_pixels - 1)) {
-                top_image.at<uint8_t>(cv::Point(x_index, y_index)) = 255; // make sure the type matches with the matrix value type, CV_*U = uint8_t
+            // DEBUG: Publish filtered pointcloud
+            if (debug) {
+                sensor_msgs::PointCloud2 pc_msg;
+                pclToROSMsg(scene_cloud, pc_msg);
+                pc_debug_pub.publish(pc_msg);
             }
-        }
 
-        //----- Find contours for blob shapes
-        // First 'close' the image to fill in thin lines
-        cv::Mat structure_element;
-        structure_element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(15,15));
-        cv::Mat top_image_close;
-        cv::morphologyEx(top_image, top_image_close, cv::MORPH_CLOSE, structure_element);
-        std::vector< std::vector<cv::Point> > contours; // stores the vectors of points making up the contours
-        std::vector<cv::Vec4i> hierarchy; // vector storing vectors which represent the connection between contours ([i][0] = next, [i][1] = previous, [i][2] = first child, [i][3] = parent)
-        findContours(top_image_close, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
-        cv::Mat top_image_contours = cv::Mat::zeros(top_image_close.size(), CV_8U);
-        for (int i = 0; i < contours.size(); ++i) {
-            drawContours(top_image_contours, contours, i, cv::Scalar(255, 255, 255), 1, 8, hierarchy, 0);
-        }
+            // If final pointcloud contains no points, exit the callback
+            if (scene_cloud->size() == 0) {
+                return;
+            }
+            //=================================================//
 
-        // // FIXME: Compare Canny edge detection image with contour image
-        // int lowThreshold = 50;
-        // cv::Mat top_blur;
-        // cv::blur(top_image, top_blur, cv::Size(3,3));
-        // cv::Mat top_edges;
-        // cv::Canny(top_blur, top_edges, lowThreshold, lowThreshold*3, 3);
-        // cv::namedWindow("Contours", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Contours", 700, 700);
-        // cv::imshow("Contours", top_image_contours);
-        // cv::namedWindow("Edges", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Edges", 700, 700);
-        // cv::imshow("Edges", top_edges);
-        // cvWaitKey(100);
+            //===== Generate 2D Image =====//
+            // Determine the grid size based on the desired resolution
+            x_range = x_max - x_min;
+            y_range = y_max - y_min;
 
-        //----- Create an image fixed in place based on 'max/min_fixed_x' and 'max/min_fixed_y', for stable visualization
-        int x_offset_pixels;
-        int y_offset_pixels;
-        cv::Mat top_image_fixed = generateFixedImage(top_image, x_offset_pixels, y_offset_pixels);
-        //=============================//
+            if (!std::isfinite(x_range)) {
+                x_range = 0;
+            }
+            if (!std::isfinite(y_range)) {
+                y_range = 0;
+            }
 
-        //===== Circle Hough Transform =====//
-        // Create an accumulator matrix that adds padding equal to the radius. This will allow the circle center to lie outside the actual image boundaries
-        radius_pixels = round(circle_radius*resolution);
-        accum_x_pixels = x_pixels + 2*radius_pixels;
-        accum_y_pixels = y_pixels + 2*radius_pixels;
-        cv::Mat accumulator = cv::Mat::zeros(accum_y_pixels, accum_x_pixels, CV_16U);
+            // Remember that transforming from sensor frame to the image frame mirrors the axes, so x pixels depend on the y range and vis-versa
+            x_pixels = round(y_range * resolution);
+            y_pixels = round(x_range * resolution);
+            x_pixel_delta = (y_range / x_pixels); // length of each pixel in image frame 'x' direction
+            y_pixel_delta = (x_range / y_pixels); // length of each pixel in image frame 'y' direction
 
-        //----- Hough Transform Iteration
-        generateAccumulatorUsingImage(top_image_contours, accumulator);
-        // generateAccumulatorUsingImage_OldMethod(top_image_contours, accumulator);
-        // DEBUG: get the top cylinder position for drawing a circle on the image for debuggin
-        // Scale accumulator matrix for better visualization
-        double accum_max;
-        double accum_min;
-        cv::Point max_loc;
-        cv::Point min_loc;
-        cv::minMaxLoc(accumulator, &accum_min, &accum_max, &min_loc, &max_loc);
-        cv::Mat accumulator_scaled = accumulator*(USHRT_MAX/accum_max); // if you change accumulator type you will need to change the max value
-        // Get the maximum point of accumulator (center of the circle)
-        int circle_index_x;
-        int circle_index_y;
-        accumulatorToImage(max_loc.x, max_loc.y, circle_index_x, circle_index_y);
+            // Calculate mirrored points for y-values in sensor frame (x direction in image frame)
+            y_mirror_min = -y_max;
+            y_mirror_max = -y_min;
 
-        // Generate mask for removing max
-        potentials.clear();
-        findPointsDeletion(potentials, accumulator_scaled);
+            // Convert points into 2D image and display
+            top_image = cv::Mat::zeros(y_pixels, x_pixels, CV_8U); // first index is rows which represent the y dimension of the image
 
-        // Filter using a accumulator threshold values
-        if (use_threshold_filter) {
-            thresholdFilter(potentials, accumulator);
-        }
+            for (int i = 0; i < scene_cloud->size(); ++i) {
+                // Transform sensor points to image indices
+                int x_index;
+                int y_index;
+                sensorToImage(scene_cloud->points[i].x, scene_cloud->points[i].y, x_index, y_index);
 
-        // Check if the potential points could be valid cylinder points
-        if (check_center_points) {
-            checkCenterPoints(potentials, top_image);
-        }
-
-        std::vector<double> variances_out(potentials.size(), 0); // used for Mahalanobis calculations only when using radius as the feature
-
-        // Filter potentials based on variance of points around circle
-        if (use_variance_filter) {
-            std::vector<double> variances(potentials.size(), 0);
-
-            varianceFilter(potentials, variances, top_image);
-            // cout << "\n";
-            // for (int j = 0; j < variances.size(); j++) {
-            //     cout << "Variances (index, value): " << j << " " << variances.at(j) << "\n";
-            // }
-            // cout << "\n";
-
-            // // DEBUG: write variances to file
-            // std::ofstream out_file;
-            // out_file.open("/home/csm/Desktop/variances.csv", std::fstream::app);
-            // for (int i = 0; i < variances.size(); i++) {
-            //     out_file << variances.at(i);
-            //     if (i != variances.size() - 1) {
-            //         out_file << ",";
-            //     }
-            //     else {
-            //         out_file << "\n";
-            //     }
-            // }
-            // out_file.close();
-
-            variances_out = variances;
-
-        }
-       // cout << "After Variance: " << potentials.size() << '\n';
-        // Find the point closest to the desired target
-        // Will only return the single closest point within range (otherwise no points returned)
-        if (use_location_filter) {
-            targetFilter(potentials, target_point);
-        }
-        //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
-        //cout << '\n';
-
-        //====================================================================//
-        // Mahalanobis Distance Filter with Bayesian Estimator
-        //====================================================================//
-        float sensor_frame_x;
-        float sensor_frame_y;
-
-        for (int i = 0; i < potentials.size(); ++i) {
-            // Convert from image pixels(potentials) to meters(sensor_frame)
-            imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
-            // Need a different variance measurement!
-            // We want to have 3 standard deviations form the center as the threshold maybe. So we need to 3
-
-            currentWallTime = getWallTime();
-            mahalanobisDistanceThreshold = 3*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y)) * ceil((currentWallTime-intervalTimeCount)/5.0) * exp(ceil((currentWallTime-intervalTimeCount)/0.5));
-            //mahalanobisDistanceThreshold = 3.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
-
-            // Calculate the mahalanobis distance using previous sigmas and target point values
-            mahalanobisDistance = sqrt(pow(sensor_frame_x-target_point.x,2)/sigma_squared_x + pow(sensor_frame_y-target_point.y,2)/sigma_squared_y);
-            cout << "\n";
-            cout << "Wall time: " << currentWallTime << "\n";
-            cout << "Wall Time - Interval Time: " << currentWallTime-intervalTimeCount << "\n";
-            cout << "Multiplier: " << ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
-            cout << "Exponential Multiplier: " << exp(ceil((currentWallTime-intervalTimeCount)/5.0)) << "\n";
-            cout << "Multiplier total: " << exp(ceil((currentWallTime-intervalTimeCount)/0.5))*ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
-            cout << "Threshold: " << mahalanobisDistanceThreshold << "\n";
-            cout << "Distance: " << mahalanobisDistance << "\n";
-
-            if (mahalanobisDistance < mahalanobisDistanceThreshold) {
-                // Convert the sensor frame point into the target frame
-                double target_frame_x;
-                double target_frame_y;
-                sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
-
-                // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
-                // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
-                num_of_points_in_filter++;
-
-                prior_points_x.push_back(target_frame_x);
-                prior_points_y.push_back(target_frame_y);
-                double sum_x = target_point.x;
-                double sum_y = target_point.y;
-                for(int k=0; k<prior_points_x.size();k++){
-                    sum_x += prior_points_x[k];
-                    sum_y += prior_points_y[k];
+                // Check that the values are within bounds
+                if (x_index >= 0 && x_index <= (x_pixels - 1) && y_index >= 0 && y_index <= (y_pixels - 1)) {
+                    top_image.at<uint8_t>(cv::Point(x_index, y_index)) = 255; // make sure the type matches with the matrix value type, CV_*U = uint8_t
                 }
-                double mean_x = sum_x/num_of_points_in_filter;
-                double mean_y = sum_y/num_of_points_in_filter;
-                double point_var_x = 0;
-                double point_var_y = 0;
-                for(int k =0; k<prior_points_x.size(); k++){
-                    point_var_x += (prior_points_x[k]-mean_x)*(prior_points_x[k]-mean_x);
-                    point_var_y += (prior_points_y[k]-mean_y)*(prior_points_y[k]-mean_y);
-                }
-                point_var_x /= num_of_points_in_filter;
-                point_var_y /= num_of_points_in_filter;
+            }
 
-                // Calculate new target point x value and sigma
-                target_point.x = (sigma_squared_x*sensor_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
-                sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+            //----- Find contours for blob shapes
+            // First 'close' the image to fill in thin lines
+            cv::Mat structure_element;
+            structure_element = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(15,15));
+            cv::Mat top_image_close;
+            cv::morphologyEx(top_image, top_image_close, cv::MORPH_CLOSE, structure_element);
+            std::vector< std::vector<cv::Point> > contours; // stores the vectors of points making up the contours
+            std::vector<cv::Vec4i> hierarchy; // vector storing vectors which represent the connection between contours ([i][0] = next, [i][1] = previous, [i][2] = first child, [i][3] = parent)
+            findContours(top_image_close, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE);
+            cv::Mat top_image_contours = cv::Mat::zeros(top_image_close.size(), CV_8U);
+            for (int i = 0; i < contours.size(); ++i) {
+                drawContours(top_image_contours, contours, i, cv::Scalar(255, 255, 255), 1, 8, hierarchy, 0);
+            }
 
-                // Calculate new target point y value
-                target_point.y = (sigma_squared_y*sensor_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
-                sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+            // // FIXME: Compare Canny edge detection image with contour image
+            // int lowThreshold = 50;
+            // cv::Mat top_blur;
+            // cv::blur(top_image, top_blur, cv::Size(3,3));
+            // cv::Mat top_edges;
+            // cv::Canny(top_blur, top_edges, lowThreshold, lowThreshold*3, 3);
+            // cv::namedWindow("Contours", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Contours", 700, 700);
+            // cv::imshow("Contours", top_image_contours);
+            // cv::namedWindow("Edges", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Edges", 700, 700);
+            // cv::imshow("Edges", top_edges);
+            // cvWaitKey(100);
 
-                //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
-                //if (variances_out.at(i) > 10^(-9)) {
-                //    sigma_squared = (variances_out.at(i)*sigma_squared) / (variances_out.at(i) + sigma_squared);
-                //} else {
-                //    sigma_squared = sigma_squared;
-                //}
+            //----- Create an image fixed in place based on 'max/min_fixed_x' and 'max/min_fixed_y', for stable visualization
+            int x_offset_pixels;
+            int y_offset_pixels;
+            cv::Mat top_image_fixed = generateFixedImage(top_image, x_offset_pixels, y_offset_pixels);
+            //=============================//
 
-                intervalTimeCount = getWallTime();
+            //===== Circle Hough Transform =====//
+            // Create an accumulator matrix that adds padding equal to the radius. This will allow the circle center to lie outside the actual image boundaries
+            radius_pixels = round(circle_radius*resolution);
+            accum_x_pixels = x_pixels + 2*radius_pixels;
+            accum_y_pixels = y_pixels + 2*radius_pixels;
+            cv::Mat accumulator = cv::Mat::zeros(accum_y_pixels, accum_x_pixels, CV_16U);
 
+            //----- Hough Transform Iteration
+            generateAccumulatorUsingImage(top_image_contours, accumulator);
+            // generateAccumulatorUsingImage_OldMethod(top_image_contours, accumulator);
+            // DEBUG: get the top cylinder position for drawing a circle on the image for debuggin
+            // Scale accumulator matrix for better visualization
+            double accum_max;
+            double accum_min;
+            cv::Point max_loc;
+            cv::Point min_loc;
+            cv::minMaxLoc(accumulator, &accum_min, &accum_max, &min_loc, &max_loc);
+            cv::Mat accumulator_scaled = accumulator*(USHRT_MAX/accum_max); // if you change accumulator type you will need to change the max value
+            // Get the maximum point of accumulator (center of the circle)
+            int circle_index_x;
+            int circle_index_y;
+            accumulatorToImage(max_loc.x, max_loc.y, circle_index_x, circle_index_y);
+
+            // Generate mask for removing max
+            potentials.clear();
+            findPointsDeletion(potentials, accumulator_scaled);
+
+            // Filter using a accumulator threshold values
+            if (use_threshold_filter) {
+                thresholdFilter(potentials, accumulator);
+            }
+
+            // Check if the potential points could be valid cylinder points
+            if (check_center_points) {
+                checkCenterPoints(potentials, top_image);
+            }
+
+            std::vector<double> variances_out(potentials.size(), 0); // used for Mahalanobis calculations only when using radius as the feature
+
+            // Filter potentials based on variance of points around circle
+            if (use_variance_filter) {
+                std::vector<double> variances(potentials.size(), 0);
+
+                varianceFilter(potentials, variances, top_image);
+                // cout << "\n";
+                // for (int j = 0; j < variances.size(); j++) {
+                //     cout << "Variances (index, value): " << j << " " << variances.at(j) << "\n";
+                // }
+                // cout << "\n";
+
+                // // DEBUG: write variances to file
+                // std::ofstream out_file;
+                // out_file.open("/home/csm/Desktop/variances.csv", std::fstream::app);
+                // for (int i = 0; i < variances.size(); i++) {
+                //     out_file << variances.at(i);
+                //     if (i != variances.size() - 1) {
+                //         out_file << ",";
+                //     }
+                //     else {
+                //         out_file << "\n";
+                //     }
+                // }
+                // out_file.close();
+
+                variances_out = variances;
+
+            }
+           // cout << "After Variance: " << potentials.size() << '\n';
+            // Find the point closest to the desired target
+            // Will only return the single closest point within range (otherwise no points returned)
+            if (use_location_filter) {
+                targetFilter(potentials, target_point);
+            }
+            //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
+            //cout << '\n';
+
+            //====================================================================//
+            // Mahalanobis Distance Filter with Bayesian Estimator
+            //====================================================================//
+            float sensor_frame_x;
+            float sensor_frame_y;
+
+            double mean_x = 0.0;
+            double mean_y = 0.0;
+            double sum_x = 0.0;
+            double sum_y = 0.0;
+            double point_count = 10;
+
+            for (int i = 0; i < potentials.size(); ++i) {
+                // Convert from image pixels(potentials) to meters(sensor_frame)
+                imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
+                // Need a different variance measurement!
+                // We want to have 3 standard deviations form the center as the threshold maybe. So we need to 3
+
+                currentWallTime = getWallTime();
+                mahalanobisDistanceThreshold = 5*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y)) * ceil((currentWallTime-intervalTimeCount)/5.0) * exp(ceil((currentWallTime-intervalTimeCount)/0.2));
+                //mahalanobisDistanceThreshold = 2.0;//*(sqrt(sigma_squared_x)+sqrt(sigma_squared_y));
+
+                mahalanobisDistanceThreshold = std::max(1.0, mahalanobisDistanceThreshold);
+
+                // Calculate the mahalanobis distance using previous sigmas and target point values
+                mahalanobisDistance = sqrt(pow(sensor_frame_x-target_point.x,2)/sigma_squared_x + pow(sensor_frame_y-target_point.y,2)/sigma_squared_y);
+                /*
                 cout << "\n";
-                cout << num_of_points_in_filter << '\n';
-                cout << "Roll Point x,y: " << sensor_frame_x << ", " << sensor_frame_y << "\n";
-                cout << "Target Point X,Y: " << target_point.x << ", " << target_point.y << "\n";
-                cout << "XXX Distance: " << mahalanobisDistance << "\n";
-                cout << "XXX Threshold: " << mahalanobisDistanceThreshold << "\n";
-                cout << "current sigma_squared_x: " << sigma_squared_x << '\n';
-                cout << "current sigma_squared_y: " << sigma_squared_y << '\n';
-                cout << "Target Point X: " << target_point.x << "\n";
-                cout << "Target Point Y: " << target_point.y << "\n";
-                // imageTosensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
+                cout << "Wall time: " << currentWallTime << "\n";
+                cout << "Wall Time - Interval Time: " << currentWallTime-intervalTimeCount << "\n";
+                cout << "Multiplier: " << ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
+                cout << "Exponential Multiplier: " << exp(ceil((currentWallTime-intervalTimeCount)/5.0)) << "\n";
+                cout << "Multiplier total: " << exp(ceil((currentWallTime-intervalTimeCount)/0.5))*ceil((currentWallTime-intervalTimeCount)/5.0) << "\n";
+                cout << "Threshold: " << mahalanobisDistanceThreshold << "\n";
+                cout << "Distance: " << mahalanobisDistance << "\n";
+                */
+
+
+                if (mahalanobisDistance < mahalanobisDistanceThreshold) {
+                    // Convert the sensor frame point into the target frame
+                    double target_frame_x;
+                    double target_frame_y;
+                    sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
+                    /*
+                    // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
+                    // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
+                    num_of_points_in_filter++;
+                    */
+
+                    if ((prior_points_x.size() < point_count) && (prior_points_y.size() < point_count)) {
+                        num_of_points_in_filter++;
+                    } else {
+                        prior_points_x.erase(prior_points_x.begin());
+                        prior_points_y.erase(prior_points_y.begin());
+                    }
+
+                    prior_points_x.push_back(target_frame_x);
+                    prior_points_y.push_back(target_frame_y);
+                    double sum_x = target_point.x;
+                    double sum_y = target_point.y;
+                    for(int k=0; k<prior_points_x.size();k++){
+                        sum_x += prior_points_x[k];
+                        sum_y += prior_points_y[k];
+                    }
+                    double mean_x = sum_x/num_of_points_in_filter;
+                    double mean_y = sum_y/num_of_points_in_filter;
+                    double point_var_x = 0;
+                    double point_var_y = 0;
+                    for(int k =0; k<prior_points_x.size(); k++){
+                        point_var_x += (prior_points_x[k]-mean_x)*(prior_points_x[k]-mean_x);
+                        point_var_y += (prior_points_y[k]-mean_y)*(prior_points_y[k]-mean_y);
+                    }
+                    point_var_x /= num_of_points_in_filter;
+                    point_var_y /= num_of_points_in_filter;
+
+                    // Calculate    new target point x value and sigma
+                    /*
+                    target_point.x = (sigma_squared_x*sensor_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                    sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+
+                    // Calculate new target point y value
+                    target_point.y = (sigma_squared_y*sensor_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                    sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+                    */
+                    sigma_squared_x = 1;
+                    sigma_squared_y = 1;
+                    target_point.x = (sigma_squared_x*mean_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                    sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+
+                    // Calculate new target point y value
+                    target_point.y = (sigma_squared_y*mean_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                    sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+
+                    //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
+                    //if (variances_out.at(i) > 10^(-9)) {
+                    //    sigma_squared = (variances_out.at(i)*sigma_squared) / (variances_out.at(i) + sigma_squared);
+                    //} else {
+                    //    sigma_squared = sigma_squared;
+                    //}
+
+                    intervalTimeCount = getWallTime();
+                    interval_count++;
+
+                    cout << "\n";
+                    cout << interval_count << '\n';
+                    cout << "Roll Point x,y: " << sensor_frame_x << ", " << sensor_frame_y << "\n";
+                    cout << "Target Point X,Y: " << target_point.x << ", " << target_point.y << "\n";
+                    cout << "XXX Distance: " << mahalanobisDistance << "\n";
+                    cout << "XXX Threshold: " << mahalanobisDistanceThreshold << "\n";
+                    cout << "current sigma_squared_x: " << sigma_squared_x << '\n';
+                    cout << "current sigma_squared_y: " << sigma_squared_y << '\n';
+                    cout << "Target Frame X: " << target_frame_x << "\n";
+                    cout << "Target Frame Y: " << target_frame_y << "\n";
+                    // imageTosensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
+                    geometry_msgs::PointStamped cylinder_point;
+                    cylinder_point.header = msg.header;
+                    cylinder_point.header.frame_id = target_frame.c_str();
+                    cylinder_point.point.x = target_point.x;
+                    cylinder_point.point.y = target_point.y;
+                    cylinder_point.point.z = 0;
+                    cyl_pub.publish(cylinder_point);
+
+                     visualization_msgs::MarkerArray cyl_markers;
+                    // Delete previous markers
+                    visualization_msgs::Marker delete_markers;
+                    delete_markers.action = visualization_msgs::Marker::DELETEALL;
+                    cyl_markers.markers.push_back(delete_markers);
+                    // DEBUG: Show cylinder marker
+                    // imageToSensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
+                    visualization_msgs::Marker cyl_marker;
+                    cyl_marker.header = msg.header;
+                    cyl_marker.header.frame_id = target_frame.c_str();
+                    cyl_marker.id = 1;
+                    cyl_marker.type = visualization_msgs::Marker::CYLINDER;
+                    cyl_marker.pose.position.x = target_point.x;
+                    cyl_marker.pose.position.y = target_point.y;
+                    cyl_marker.pose.position.z = 0;
+                    cyl_marker.pose.orientation.x = 0;
+                    cyl_marker.pose.orientation.y = 0;
+                    cyl_marker.pose.orientation.z = 0;
+                    cyl_marker.pose.orientation.w = 1.0;
+                    cyl_marker.scale.x = 0.75*(2*circle_radius);
+                    cyl_marker.scale.y = 0.75*(2*circle_radius);
+                    cyl_marker.scale.z = 1.0;
+                    cyl_marker.color.a = 1.0;
+                    cyl_marker.color.r = 1.0;
+                    cyl_marker.color.g = 1.0;
+                    cyl_marker.color.b = 1.0;
+                    cyl_marker.lifetime = ros::Duration(1/100);
+                    cyl_markers.markers.push_back(cyl_marker);
+                    marker_pub.publish(cyl_markers);
+
+                }
+            }
+
+
+            // // DEBUG: Hightlight the max point with a circle
+            // cv::Mat top_image_rgb;
+            // cv::cvtColor(top_image, top_image_rgb, cv::COLOR_GRAY2RGB);
+            // cv::circle(top_image_rgb, cv::Point(circle_index_x, circle_index_y), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
+            // cv::drawMarker(top_image_rgb, cv::Point(circle_index_x, circle_index_y), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
+            // cv::Mat top_image_fixed_rgb;
+            // cv::cvtColor(top_image_fixed, top_image_fixed_rgb, cv::COLOR_GRAY2RGB);
+            // cv::circle(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
+            // cv::drawMarker(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
+
+            // // DEBUG: test visualization
+            // viewer.removePointCloud("scene_cloud");
+            // viewer.addPointCloud(scene_cloud, "scene_cloud");
+            // viewer.addCoordinateSystem(1.0);
+            // viewer.spinOnce();
+
+            // // DEBUG: Show image
+            // cv::namedWindow("Top Image Fixed", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Top Image Fixed", 700, 700);
+            // cv::imshow("Top Image Fixed", top_image_fixed_rgb);
+            //
+            // cv::namedWindow("Top Image Contours", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Top Image Contours", 700, 700);
+            // cv::imshow("Top Image Contours", top_image_contours);
+            //
+            // cv::namedWindow("Top Image", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Top Image", 900, 1000);
+            // cv::imshow("Top Image", top_image);
+            //
+            // cv::namedWindow("Accumulator", cv::WINDOW_NORMAL);
+            // cv::resizeWindow("Accumulator", 900, 1000);
+            // cv::imshow("Accumulator", accumulator_scaled);
+            //
+            // cvWaitKey(1);
+            //==================================//
+
+            //===== Convert Point Back to Sensor Frame and Publish =====//
+            //float sensor_frame_x;
+            //float sensor_frame_y;
+
+            if (!potentials.empty()) {
+                imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
                 geometry_msgs::PointStamped cylinder_point;
                 cylinder_point.header = msg.header;
-                cylinder_point.header.frame_id = target_frame.c_str();
-                cylinder_point.point.x = target_point.x;
-                cylinder_point.point.y = target_point.y;
+                cylinder_point.header.frame_id = sensor_frame.c_str();
+                cylinder_point.point.x = sensor_frame_x;
+                cylinder_point.point.y = sensor_frame_y;
                 cylinder_point.point.z = 0;
-                cyl_pub.publish(cylinder_point);
+              //  cyl_pub.publish(cylinder_point);
+            }
 
-                 visualization_msgs::MarkerArray cyl_markers;
-                // Delete previous markers
-                visualization_msgs::Marker delete_markers;
-                delete_markers.action = visualization_msgs::Marker::DELETEALL;
-                cyl_markers.markers.push_back(delete_markers);
+            // Create a marker for cylinder visualization in RVIZ
+            visualization_msgs::MarkerArray cyl_markers;
+            // Delete previous markers
+            visualization_msgs::Marker delete_markers;
+            delete_markers.action = visualization_msgs::Marker::DELETEALL;
+            cyl_markers.markers.push_back(delete_markers);
+            for (int i = 0; i < potentials.size(); ++i) {
                 // DEBUG: Show cylinder marker
-                // imageToSensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
+                imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
                 visualization_msgs::Marker cyl_marker;
                 cyl_marker.header = msg.header;
-                cyl_marker.header.frame_id = target_frame.c_str();
-                cyl_marker.id = 1;
+                cyl_marker.header.frame_id = sensor_frame.c_str();
+                cyl_marker.id = i+1;
                 cyl_marker.type = visualization_msgs::Marker::CYLINDER;
-                cyl_marker.pose.position.x = target_point.x;
-                cyl_marker.pose.position.y = target_point.y;
+                cyl_marker.pose.position.x = sensor_frame_x;
+                cyl_marker.pose.position.y = sensor_frame_y;
                 cyl_marker.pose.position.z = 0;
                 cyl_marker.pose.orientation.x = 0;
                 cyl_marker.pose.orientation.y = 0;
@@ -623,97 +779,11 @@ public:
                 cyl_marker.color.b = 1.0;
                 cyl_marker.lifetime = ros::Duration(1/100);
                 cyl_markers.markers.push_back(cyl_marker);
-                marker_pub.publish(cyl_markers);
-
             }
+
+           //marker_pub.publish(cyl_markers);
+            //==========================================================//
         }
-
-
-        // // DEBUG: Hightlight the max point with a circle
-        // cv::Mat top_image_rgb;
-        // cv::cvtColor(top_image, top_image_rgb, cv::COLOR_GRAY2RGB);
-        // cv::circle(top_image_rgb, cv::Point(circle_index_x, circle_index_y), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
-        // cv::drawMarker(top_image_rgb, cv::Point(circle_index_x, circle_index_y), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
-        // cv::Mat top_image_fixed_rgb;
-        // cv::cvtColor(top_image_fixed, top_image_fixed_rgb, cv::COLOR_GRAY2RGB);
-        // cv::circle(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
-        // cv::drawMarker(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
-
-        // // DEBUG: test visualization
-        // viewer.removePointCloud("scene_cloud");
-        // viewer.addPointCloud(scene_cloud, "scene_cloud");
-        // viewer.addCoordinateSystem(1.0);
-        // viewer.spinOnce();
-
-        // // DEBUG: Show image
-        // cv::namedWindow("Top Image Fixed", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image Fixed", 700, 700);
-        // cv::imshow("Top Image Fixed", top_image_fixed_rgb);
-        //
-        // cv::namedWindow("Top Image Contours", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image Contours", 700, 700);
-        // cv::imshow("Top Image Contours", top_image_contours);
-        //
-        // cv::namedWindow("Top Image", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image", 900, 1000);
-        // cv::imshow("Top Image", top_image);
-        //
-        // cv::namedWindow("Accumulator", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Accumulator", 900, 1000);
-        // cv::imshow("Accumulator", accumulator_scaled);
-        //
-        // cvWaitKey(1);
-        //==================================//
-
-        //===== Convert Point Back to Sensor Frame and Publish =====//
-        //float sensor_frame_x;
-        //float sensor_frame_y;
-
-        if (!potentials.empty()) {
-            imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
-            geometry_msgs::PointStamped cylinder_point;
-            cylinder_point.header = msg.header;
-            cylinder_point.header.frame_id = sensor_frame.c_str();
-            cylinder_point.point.x = sensor_frame_x;
-            cylinder_point.point.y = sensor_frame_y;
-            cylinder_point.point.z = 0;
-          //  cyl_pub.publish(cylinder_point);
-        }
-
-        // Create a marker for cylinder visualization in RVIZ
-        visualization_msgs::MarkerArray cyl_markers;
-        // Delete previous markers
-        visualization_msgs::Marker delete_markers;
-        delete_markers.action = visualization_msgs::Marker::DELETEALL;
-        cyl_markers.markers.push_back(delete_markers);
-        for (int i = 0; i < potentials.size(); ++i) {
-            // DEBUG: Show cylinder marker
-            imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
-            visualization_msgs::Marker cyl_marker;
-            cyl_marker.header = msg.header;
-            cyl_marker.header.frame_id = sensor_frame.c_str();
-            cyl_marker.id = i+1;
-            cyl_marker.type = visualization_msgs::Marker::CYLINDER;
-            cyl_marker.pose.position.x = sensor_frame_x;
-            cyl_marker.pose.position.y = sensor_frame_y;
-            cyl_marker.pose.position.z = 0;
-            cyl_marker.pose.orientation.x = 0;
-            cyl_marker.pose.orientation.y = 0;
-            cyl_marker.pose.orientation.z = 0;
-            cyl_marker.pose.orientation.w = 1.0;
-            cyl_marker.scale.x = 0.75*(2*circle_radius);
-            cyl_marker.scale.y = 0.75*(2*circle_radius);
-            cyl_marker.scale.z = 1.0;
-            cyl_marker.color.a = 1.0;
-            cyl_marker.color.r = 1.0;
-            cyl_marker.color.g = 1.0;
-            cyl_marker.color.b = 1.0;
-            cyl_marker.lifetime = ros::Duration(1/100);
-            cyl_markers.markers.push_back(cyl_marker);
-        }
-
-       // marker_pub.publish(cyl_markers);
-        //==========================================================//
     }
 
     void rosMsgToPCL(const sensor_msgs::PointCloud2& msg, pcl::PointCloud<PointT>::Ptr cloud)
@@ -1569,6 +1639,18 @@ public:
         return (double)time.tv_sec + (double)time.tv_usec*0.000001;
     }
 
+    bool checkControlMode(int mode, std::vector<int> vector_of_modes)
+    {
+        // Use 'find' on the vector to determine existence of 'mode'
+        std::vector<int>::iterator it;
+        it = std::find(vector_of_modes.begin(), vector_of_modes.end(), mode);
+        if (it != vector_of_modes.end()) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
 };
 
 

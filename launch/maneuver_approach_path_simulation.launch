@@ -10,6 +10,13 @@
     <!-- Load Forklift Dimensions -->
     <rosparam file="$(find setup_tf)/config/forklift.yaml" command="load"/>
 
+    <!--===================-->
+    <!-- Master Controller -->
+    <!--===================-->
+    <node pkg="motion_testing" type="master_controller.py" name="master_controller" output="screen">
+        <param name="~debug_test" value="grasp" type="str"/>
+    </node>
+
     <!--============================-->
     <!-- Begin Turtlebot Simulation -->
     <!--============================-->
@@ -20,19 +27,19 @@
         <arg name="world_file" value="/opt/ros/kinetic/share/turtlebot_gazebo/worlds/empty.world"/>
         <arg name="gui" value="false"/>
     </include>
-    
+
     <!--===================================-->
     <!-- Obstacle Avoidance Path Generator -->
     <!--===================================-->
     <node pkg="robust_navigation" type="planner_node" name="planner_node" respawn="true">
         <remap from="/path" to="/obstacle_avoidance_path"/>
-        <remap from="map" to="test_map_generator/map"/>
+        <remap from="/map" to="/test_map_generator/map"/>
     </node>
-    
+
     <!--=========================-->
     <!-- Maneuver Path Generator -->
     <!--=========================-->
-    <node pkg="grasping" type="maneuver_path.py" name="maneuver_path">
+    <node pkg="grasping" type="maneuver_path.py" name="maneuver_path" output="screen">
         <remap from="/maneuver_path/path1" to="/maneuver_path1"/>
         <remap from="/maneuver_path/path2" to="/maneuver_path2"/>
     </node>
@@ -43,7 +50,7 @@
     <node pkg="grasping" type="approach_path" name="approach_path">
         <remap from="/approach_path/path" to="/approach_path"/>
     </node>
-    
+
     <!--======================-->
     <!-- Velocity Controllers -->
     <!--======================-->
@@ -55,19 +62,17 @@
         <remap from="/steering_node/filtered_angle" to="/controls/angle_setpoint"/>
         <remap from="/velocity_conversion/twist" to="/mobile_base/commands/velocity"/>
     </node>
-    
-    <!--==============-->
-    <!-- Path Handler -->
-    <!--==============-->
-    <node pkg="motion_testing" type="path_handler.py" name="path_handler" output="screen"/>
-    
+
     <!--===================-->
     <!-- Generate Test Map -->
     <!--===================-->
-    <node pkg="motion_testing" type="test_map_generator.py" name="test_map_generator">
+    <node pkg="motion_testing" type="test_map_generator.py" name="test_map_generator" output="screen">
         <remap from="/test_map_generator/target" to="/roll/pose" />
     </node>
     
+    <!-- Call service to start path generation -->
+    <node pkg="motion_testing" type="test_service_call.py" name="test_service_call" output="screen"/>
+
     <!--====================-->
     <!-- Joystick Simulator -->
     <!--====================-->
