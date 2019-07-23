@@ -1,14 +1,21 @@
 /* Pin layout
- *  Arduino ---> Clamp control
+ *  Switch Pin ---> Clamp control
  *  Red ---> GND  
  *  White ---> 5V  
  *  Black ---> Signal 1 
  *  Green ---> Signal 2 
  *  
+ *  Clamp switches armrest pin layout:
+ *     up/down    open/close
+ *P:  9       10      11     12   
+ *    Raise 1 Raise 2 Open 1 Open 2
+ *    R''     B''     R      B
+ *  
+ *  
  *  Limit switch ---> Arduino
  *  Clamp_movement & Clamp_grasp
  *  COM ---> 5V
- *  NC ---> R-7, GNDx
+ *  NC ---> R, GNDx
  *  
  *  FSR ---> Arduino 
  *  FSR_R ---> 5V
@@ -17,12 +24,14 @@
  *  Stretch sensor ---> Arduino
  *  SS_r ---> 5V 
  *  SS_l ---> 10k R -- GND, A1
+ *  
  */
 
 #include <ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <std_msgs/Int16.h>
+
 
 void switchCallback(const std_msgs::Bool&);
 void clampmovementCallback(const std_msgs::Float32&);
@@ -43,6 +52,7 @@ bool switch_status_close;
 // Force Sensitive Resistor
 int fsrPin = A0;
 int16_t fsrReading;
+
 
 // Stretch sensor
 int stretch_sensor_1_pin = A1;
@@ -74,11 +84,11 @@ ros::NodeHandle nh;
 std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
+std_msgs::Bool switch_close_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
-std_msgs::Int16 debug_msg;
-ros::Publisher debug_pub("debug", &debug_msg);
+ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -111,7 +121,10 @@ void setup()
   digitalWrite(led,HIGH);
   nh.advertise(limit_switch_open_pub);
 
-  nh.advertise(debug_pub);
+  pinMode(limit_switch_close, INPUT);
+  pinMode(led, OUTPUT);
+  digitalWrite(led, HIGH);
+  nh.advertise(limit_switch_close_pub);
 
   // FSR
   nh.advertise(force_pub);
@@ -129,12 +142,12 @@ void setup()
   pinMode(OPEN_PIN_SIGNAL_1, OUTPUT);
   pinMode(OPEN_PIN_SIGNAL_2, OUTPUT);
 
-  analogWrite(RAISE_PIN_SIGNAL_1, PWM_MIDDLE_2);
-  analogWrite(RAISE_PIN_SIGNAL_2, PWM_MIDDLE_1);
-  analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_2);
-  analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_1);
+  analogWrite(RAISE_PIN_SIGNAL_1, PWM_MIDDLE_1);
+  analogWrite(RAISE_PIN_SIGNAL_2, PWM_MIDDLE_2);
+  analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_1);
+  analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_2);
 
-  Serial.begin(19200);
+  Serial.begin(57600);
 }
 
 void loop() 
@@ -171,7 +184,7 @@ void loop()
   limit_switch_down_pub.publish(&switch_down_msg);
   delay(10);
 
-  // Clamp open limit switch
+  // Open
   if (digitalRead(limit_switch_open) == LOW)
   {
     digitalWrite(led, HIGH);
@@ -184,13 +197,25 @@ void loop()
   }
   switch_open_msg.data = switch_status_open;
   limit_switch_open_pub.publish(&switch_open_msg);
-  delay(10);
+
+  // Close
+  if (digitalRead(limit_switch_close) == LOW)
+  {
+    digitalWrite(led, HIGH);
+    switch_status_close = true;
+  }
+  else
+  {
+    digitalWrite(led, LOW);
+    switch_status_close = false;
+  }
+  switch_close_msg.data = switch_status_close;
+  limit_switch_close_pub.publish(&switch_close_msg);
   
   // FSR
   fsrReading = analogRead(fsrPin);
   force_msg.data = fsrReading;
   force_pub.publish(&force_msg);
-  delay(10);
 
   // Stretch sensor
   float stretch_value;
@@ -222,10 +247,14 @@ void loop()
   val_2 = 1000 / r_2_2;
 
   stretch_value = (val_1 + val_2) / 2;
+
+  // DEBUG: manually set reading that is within the tolerance for plate movement
+  // so that the plate does not have to be manually moved for the close command
+  // to run.
+  stretch_value = 20;
   
   stretch_msg.data = stretch_value;
   stretch_sensor_pub.publish( &stretch_msg );
-  delay(10);
   
   // Clamp switch control
 
@@ -270,17 +299,17 @@ void loop()
   if (clamp_grasp <= 0) 
   {
     // Checking for the plate position
-    //if ((stretch_value > 16.0 && stretch_value < 22.0) && (fsrReading < 400))
-    if (true)
+    if (stretch_value > 16.0 && stretch_value < 22.0)
     {
-      // Check for FSR value and limit switch
-      //if (fsrReading < 400)
-      int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
-      int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
+      // Check limit switch
+      if (switch_status_close == false)
+      {
+        int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
+        int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
   
-      analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
-      analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
-       
+        analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
+        analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
+      }
     }
     else
     {
