@@ -32,25 +32,28 @@ void clampgraspCallback(const std_msgs::Float32&);
 int limit_switch_up = 7;
 int limit_switch_down = 6;
 int limit_switch_open = 5;
+int limit_switch_close = 4;
+
 const int led = 13;
 bool switch_status_up;
 bool switch_status_down;
 bool switch_status_open;
+bool switch_status_close;
 
 // Force Sensitive Resistor
-int fsrPin = 0;
+int fsrPin = A0;
 int16_t fsrReading;
 
 // Stretch sensor
-int stretch_sensor_1_pin = 1;
-int stretch_sensor_2_pin = 2;
+int stretch_sensor_1_pin = A1;
+int stretch_sensor_2_pin = A2;
 
 // Clamp switch
-const int SIGNAL_PIN_1 = 12;
-const int SIGNAL_PIN_2 = 11;
+const int RAISE_PIN_SIGNAL_1 = 9;
+const int RAISE_PIN_SIGNAL_2 = 10;
 
-const int SIGNAL_PIN_3 = 10;
-const int SIGNAL_PIN_4 = 9;
+const int OPEN_PIN_SIGNAL_1 = 11;
+const int OPEN_PIN_SIGNAL_2 = 12;
 
 const int PWM_MIN_1 = 120;
 const int PWM_MIDDLE_1 = 190;
@@ -121,15 +124,15 @@ void setup()
   nh.subscribe(clamp_movement_sub);
   nh.subscribe(clamp_grasp_sub);
 
-  pinMode(SIGNAL_PIN_1, OUTPUT);
-  pinMode(SIGNAL_PIN_2, OUTPUT);
-  pinMode(SIGNAL_PIN_3, OUTPUT);
-  pinMode(SIGNAL_PIN_4, OUTPUT);
-  
-  analogWrite(SIGNAL_PIN_1, PWM_MIDDLE_1);
-  analogWrite(SIGNAL_PIN_2, PWM_MIDDLE_2);
-  analogWrite(SIGNAL_PIN_3, PWM_MIDDLE_1);
-  analogWrite(SIGNAL_PIN_4, PWM_MIDDLE_2);
+  pinMode(RAISE_PIN_SIGNAL_1, OUTPUT);
+  pinMode(RAISE_PIN_SIGNAL_2, OUTPUT);
+  pinMode(OPEN_PIN_SIGNAL_1, OUTPUT);
+  pinMode(OPEN_PIN_SIGNAL_2, OUTPUT);
+
+  analogWrite(RAISE_PIN_SIGNAL_1, PWM_MIDDLE_2);
+  analogWrite(RAISE_PIN_SIGNAL_2, PWM_MIDDLE_1);
+  analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_2);
+  analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_1);
 
   Serial.begin(19200);
 }
@@ -235,17 +238,13 @@ void loop()
       int pwm_signal_move_1 = map(100*clamp_movement, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_move_2 = map(100*clamp_movement, -100, 100, PWM_MAX_2, PWM_MIN_2);
 
-      debug_msg.data = int16_t(pwm_signal_move_1);
-      debug_pub.publish(debug_msg.data);
-      delay(10);
-
-      analogWrite(SIGNAL_PIN_1, pwm_signal_move_1);
-      analogWrite(SIGNAL_PIN_2, pwm_signal_move_2);
+      analogWrite(RAISE_PIN_SIGNAL_1, pwm_signal_move_1);
+      analogWrite(RAISE_PIN_SIGNAL_2, pwm_signal_move_2);
     }
     else
     {
-      analogWrite(SIGNAL_PIN_1, PWM_MIDDLE_1);
-      analogWrite(SIGNAL_PIN_2, PWM_MIDDLE_2);
+      analogWrite(RAISE_PIN_SIGNAL_1, PWM_MIDDLE_1);
+      analogWrite(RAISE_PIN_SIGNAL_2, PWM_MIDDLE_2);
     }
   }
   
@@ -256,13 +255,13 @@ void loop()
       int pwm_signal_move_1 = map(100*clamp_movement, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_move_2 = map(100*clamp_movement, -100, 100, PWM_MAX_2, PWM_MIN_2);
 
-      analogWrite(SIGNAL_PIN_1, pwm_signal_move_1);
-      analogWrite(SIGNAL_PIN_2, pwm_signal_move_2);
+      analogWrite(RAISE_PIN_SIGNAL_1, pwm_signal_move_1);
+      analogWrite(RAISE_PIN_SIGNAL_2, pwm_signal_move_2);
     }
     else
     {
-      analogWrite(SIGNAL_PIN_1, PWM_MIDDLE_1);
-      analogWrite(SIGNAL_PIN_2, PWM_MIDDLE_2);
+      analogWrite(RAISE_PIN_SIGNAL_1, PWM_MIDDLE_1);
+      analogWrite(RAISE_PIN_SIGNAL_2, PWM_MIDDLE_2);
     }
   }
   
@@ -279,14 +278,14 @@ void loop()
       int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
   
-      analogWrite(SIGNAL_PIN_3, pwm_signal_grasp_1);
-      analogWrite(SIGNAL_PIN_4, pwm_signal_grasp_2);
+      analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
+      analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
        
     }
     else
     {
-      analogWrite(SIGNAL_PIN_3, PWM_MIDDLE_1);
-      analogWrite(SIGNAL_PIN_4, PWM_MIDDLE_2);
+      analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_1);
+      analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_2);
     }
   }
   else if (clamp_grasp > 0)
@@ -297,13 +296,13 @@ void loop()
       int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
       int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
   
-      analogWrite(SIGNAL_PIN_3, pwm_signal_grasp_1);
-      analogWrite(SIGNAL_PIN_4, pwm_signal_grasp_2);
+      analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
+      analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
     } 
     else
     {
-      analogWrite(SIGNAL_PIN_3, PWM_MIDDLE_1);
-      analogWrite(SIGNAL_PIN_4, PWM_MIDDLE_2);
+      analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_1);
+      analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_2);
     }
   }
   
