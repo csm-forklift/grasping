@@ -5,13 +5,13 @@
     <!--==========================-->
     <arg name="debug" default="false"/>
     <arg name="port_clamp" default="/dev/ttyACM0"/>
-    <arg name="clamp_scale" default="0.7"/>
+    <arg name="clamp_scale" default="0.5"/>
     <arg name="target_x" default="0.0"/>
     <arg name="target_y" default="0.0"/>
     <arg name="target_frame" default="/odom"/>
     <arg name="grasp_angle" default="0.7854"/>
     <arg name="angle_tolerance" default="0.01"/>
-    <arg name="K_angle" default="10.0"/>
+    <arg name="K_angle" default="1.0"/>
     <arg name="K_linear" default="1.0"/>
     <arg name="max_velocity" default="0.25"/>
     <arg name="grasp_plate_offset_x" default="0.36"/>
@@ -30,7 +30,7 @@
     <!-- Clamp Control -->
     <!--===============-->
     <!-- The arduino running this code should be a MEGA and should be running "grasping/src/clamp_switch/clamp_switch.ino", see file for wiring -->
-    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="true">
+    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="false">
         <param name="port" value="$(arg port_clamp)" />
     </node>
     
@@ -44,7 +44,7 @@
     <!--==================-->
     <!-- Approach Control -->
     <!--==================-->
-    <node pkg="grasping" name="approach_controller" type="approach_controller">
+    <node pkg="grasping" name="approach_controller" type="approach_controller" output="screen">
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
         <param name="grasp_angle" value="$(arg grasp_angle)"/>
@@ -66,7 +66,7 @@
     <!--====================-->
     <!-- Cylinder Detection -->
     <!--====================-->
-    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection">
+    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" output="screen">
         <param name="debug" value="$(arg debug)"/>
         <param name="sensor_frame" value="$(arg sensor_frame)"/>
         <param name="point_cloud_topic" value="$(arg point_cloud_topic)"/>

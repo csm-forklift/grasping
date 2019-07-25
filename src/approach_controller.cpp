@@ -9,6 +9,7 @@
 #include <std_msgs/Float64.h>
 #include <std_msgs/Int8.h>
 #include <tf/tf.h>
+#include <tf/transform_listener.h>
 #include <sys/time.h>
 #include <sensor_msgs/Joy.h>
 
@@ -50,6 +51,7 @@ private:
     // Ppaer roll target position
     double paperRoll_x;
     double paperRoll_y;
+    bool roll_seen; // turns to 'true' once a message has been received from cylinder detection
     double roll_radius;
     double approach_distance; // distance from the roll to the forklift's target point
     double approach_tolerance; // stops linear motion if distance is less than this value, can be positive or negative
@@ -100,6 +102,7 @@ public:
         // Read in parameters
         nh_.param<double>("target_x", paperRoll_x, 0.0);
         nh_.param<double>("target_y", paperRoll_y, 0.0);
+        roll_seen = false; // wait for this value to become true before sending commands
         nh_.param<double>("/roll/radius", roll_radius, 0.20);
         nh_.param<double>("grasp_angle", grasp_angle, M_PI/4);
         nh_.param<double>("angle_tolerance", angle_tolerance, 0.05);
@@ -178,7 +181,7 @@ public:
     {
         while (nh_.ok()) {
             // TODO: add 'if' statements around the publishers to make sure they do not publish if the control_mode is wrong
-            if (checkControlMode(control_mode, available_control_modes)) {
+            if (checkControlMode(control_mode, available_control_modes) and roll_seen) {
                 // TODO: add logic that checks if the clamp is lowered and open before beginning.
                 if (operation_mode == 0) {
                     // DEBUG:
@@ -216,6 +219,8 @@ public:
         // ros::Duration(1.0).sleep();
         while (abs(current_steering_angle-steering_angle) > angle_tolerance) {
             // Publish the new steering angle and velocity
+            cout << "Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
+
             publishMessages();
             ros::spinOnce();
 
@@ -232,11 +237,27 @@ public:
     {
         // Control sequence for approaching the roll
         while (stretch_on == false && ros::ok()) {
+            // Calculate forklift's new target position in the odom frame
+            tf::TransformListener listener;
+            tf::StampedTransform transform;
+            listener.waitForTransform("/odom", "/clamp_short_arm", ros::Time(0), ros::Duration(1.0));
+            listener.lookupTransform("/odom", "/clamp_short_arm", ros::Time(0), transform);
+            double plate_x = transform.getOrigin().x();
+            double plate_y = transform.getOrigin().y();
+            forklift_target_x = plate_x + roll_radius*cos(grasp_angle + forklift_heading);
+            forklift_target_y = plate_y + roll_radius*sin(grasp_angle + forklift_heading);
+
+            geometry_msgs::PointStamped forklift_target;
+            forklift_target.header.frame_id = "/odom";
+            forklift_target.point.x = forklift_target_x;
+            forklift_target.point.y = forklift_target_y;
+            forklift_target_pub.publish(forklift_target);
+
             // Calculate linear velocity for forklift
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
             //linear_velocity = proportional_control_linear * approach_distance;
 
-            cout << "Roll x: " << paperRoll_x << ", y: " << paperRoll_y << "\n";
+            cout << "Roll x: " << paperRoll_x << ", y: " << paperRoll_y << ", Forklift x: " << forklift_target_x << ", y: " << forklift_target_y << "\n";
 
             // Adjust wheel angle as necessary
             theta_desired = atan2(paperRoll_y-forklift_target_y, paperRoll_x-forklift_target_x);
@@ -373,8 +394,12 @@ public:
         forklift_heading = yaw;
 
         // Calculate forklift's new target position in the odom frame
-        double plate_x = forklift_x + grasp_plate_offset_x;
-        double plate_y = forklift_y + grasp_plate_offset_y;
+        tf::TransformListener listener;
+        tf::StampedTransform transform;
+        listener.waitForTransform("/odom", "/clamp_short_arm", ros::Time(0), ros::Duration(1.0));
+        listener.lookupTransform("/odom", "/clamp_short_arm", ros::Time(0), transform);
+        double plate_x = transform.getOrigin().x();
+        double plate_y = transform.getOrigin().y();
         forklift_target_x = plate_x + roll_radius*cos(grasp_angle + forklift_heading);
         forklift_target_y = plate_y + roll_radius*sin(grasp_angle + forklift_heading);
 
@@ -388,6 +413,7 @@ public:
     void rollCallback(const geometry_msgs::PointStamped &msg)
     {
         // Update paper roll from cylinder detection
+        roll_seen = true;
         paperRoll_x = msg.point.x;
         paperRoll_y = msg.point.y;
     }
