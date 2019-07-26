@@ -58,9 +58,6 @@
     <node pkg="robust_navigation" type="velocity_controller_reverse" name="velocity_controller_reverse" respawn="true"/>
     <node pkg="sensors" type="velocity_conversion" name="velocity_conversion" output="screen">
         <param name="use_covariance" value="false"/>
-        <remap from="/velocity_node/velocity" to="/controls/velocity_setpoint"/>
-        <remap from="/steering_node/filtered_angle" to="/controls/angle_setpoint"/>
-        <remap from="/velocity_conversion/twist" to="/mobile_base/commands/velocity"/>
     </node>
 
     <!--===================-->

@@ -30,10 +30,12 @@ private:
     ros::Subscriber steering_angle_sub;
     ros::Subscriber joystick_override_sub;
     ros::Publisher velocity_pub; // publish linear velocity command
+    ros::Publisher gear_pub; // publish the desired gear (1 = forward, 0 = neutral, -1 = reverse)
     ros::Publisher steering_angle_pub; // publish steering angle command
     ros::Rate rate; // publishing rate
     std_msgs::Float64 steering_angle_msg;
     std_msgs::Float64 velocity_msg;
+    std_msgs::Int8 gear_msg;
 
     // DEBUG: check forklift target point
     ros::Publisher forklift_target_pub;
@@ -80,6 +82,7 @@ private:
     // Linear velocity command
     double linear_velocity; // velocity command
     double movement_velocity; // velocity command after bounding
+    int gear; // current gear direction of forklift: 1 = forward, 0 = neutral, -1 = reverse
 
     // Steering angle command of the back wheels, positive turns wheels to the left giving a right-hand turn and vis-versa
     double steering_angle, steering_angle_min, steering_angle_max, current_steering_angle;
@@ -131,6 +134,7 @@ public:
         joystick_override_sub = nh_.subscribe("/joy", 1, &ApproachController::joy_override, this);
 
         velocity_pub = nh_.advertise<std_msgs::Float64>("/velocity_node/velocity_setpoint", 1);
+        gear_pub = nh_.advertise<std_msgs::Int8>("/velocity_node/gear", 1);
         steering_angle_pub = nh_.advertise<std_msgs::Float64>("/steering_node/angle_setpoint", 1);
 
         // DEBUG:
@@ -146,6 +150,7 @@ public:
         theta_desired = 0;
         linear_velocity = 0.0;
         movement_velocity = 0.0;
+        gear = 0;
         steering_angle = 0;
         current_steering_angle = 0.0;
 
@@ -214,6 +219,7 @@ public:
         steering_angle = max(steering_angle, steering_angle_min);
 
         movement_velocity = 0;
+        gear = 1;
 
         // Give time for the steering angle to get to position
         // ros::Duration(1.0).sleep();
@@ -307,6 +313,7 @@ public:
             // Set forklift velocity
             // Bound movement velocity
             movement_velocity = min(linear_velocity, max_velocity);
+            gear = 1;
 
             // Publish new steering angle and velocity
             publishMessages();
@@ -347,7 +354,8 @@ public:
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
 
             // Set backup velocity
-            movement_velocity = max_velocity/5;
+            movement_velocity = -max_velocity/5;
+            gear = -1;
 
             // Set backup steering angle to 0
             steering_angle = 0;
@@ -487,6 +495,10 @@ public:
             // Send desired steering angle through publisher
             steering_angle_msg.data = steering_angle;
             steering_angle_pub.publish(steering_angle_msg);
+
+            // Send desired gear
+            gear_msg.data = gear;
+            gear_pub.publish(gear_msg);
 
             // Send desired velocity through publisher
             velocity_msg.data = movement_velocity;
