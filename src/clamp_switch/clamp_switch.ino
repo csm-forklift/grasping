@@ -248,10 +248,10 @@ void loop()
 
   stretch_value = (val_1 + val_2) / 2;
 
-  // DEBUG: manually set reading that is within the tolerance for plate movement
-  // so that the plate does not have to be manually moved for the close command
-  // to run.
-  stretch_value = 20;
+//  // DEBUG: manually set reading that is within the tolerance for plate movement
+//  // so that the plate does not have to be manually moved for the close command
+//  // to run.
+//  stretch_value = 20;
   
   stretch_msg.data = stretch_value;
   stretch_sensor_pub.publish( &stretch_msg );

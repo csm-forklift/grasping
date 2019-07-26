@@ -35,6 +35,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Int8.h>
 #include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PointStamped.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <visualization_msgs/Marker.h>
@@ -64,6 +65,7 @@ private:
     ros::NodeHandle nh_;
     ros::Subscriber pc_sub; // subscribes to pointcloud data
     ros::Subscriber control_mode_sub; // reads the current control mode set by the master controller
+    ros::Subscriber roll_pose_sub; // reads the rolls new target position
     ros::Publisher cyl_pub; // publish the position of the cylinder as a pose
     ros::Publisher marker_pub; // publish cylinder marker
     ros::Publisher pc_debug_pub; // publish filtered pointcloud for debugging
@@ -190,17 +192,19 @@ public:
         nh_.param<bool>("debug", debug, false);
 
         //===== ROS Objects =====//
+        cyl_pub = nh_.advertise<geometry_msgs::PointStamped>("point", 1);
+        marker_pub = nh_.advertise<visualization_msgs::MarkerArray>("markers", 1);
+        if (debug) {
+            pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
+        }
         //sensor_frame.insert(0, "/"); // sensor is assumed to be level with the ground, this frame must one where Z is up
         //target_frame.insert(0, "/"); // this frame should have the Z axis pointing upward
         ROS_INFO("Reading depth points from: %s", point_topic.c_str());
         ROS_INFO("Transforming cloud to '%s' frame", sensor_frame.c_str());
         pc_sub = nh_.subscribe(point_topic.c_str(), 1, &CylinderDetector::pcCallback, this);
         control_mode_sub = nh_.subscribe("/control_mode", 1, &CylinderDetector::controlModeCallback, this);
-        cyl_pub = nh_.advertise<geometry_msgs::PointStamped>("point", 1);
-        marker_pub = nh_.advertise<visualization_msgs::MarkerArray>("markers", 1);
-        if (debug) {
-            pc_debug_pub = nh_.advertise<sensor_msgs::PointCloud2>("filtered_points", 1);
-        }
+        roll_pose_sub = nh_.subscribe("/roll/pose", 1, &CylinderDetector::rollPoseCallback, this);
+
 
         //===== Print out possible values for control mode =====//
         // Pushback more numbers to allow this controller to operate in more
@@ -268,6 +272,13 @@ public:
     void controlModeCallback(const std_msgs::Int8 &msg)
     {
         control_mode = msg.data;
+    }
+
+    void rollPoseCallback(const geometry_msgs::PoseStamped &msg)
+    {
+        // Update the roll's target point
+        target_point.x = msg.pose.position.x;
+        target_point.y = msg.pose.position.y;
     }
 
     void pcCallback(const sensor_msgs::PointCloud2 &msg)
