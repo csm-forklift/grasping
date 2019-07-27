@@ -85,7 +85,7 @@ public:
 		limit_switch_close_sub = nh.subscribe<std_msgs::Bool> ("switch_status_close", 1, &ClampControl::limit_close_Callback, this);
 		force_sub = nh.subscribe<std_msgs::Int16> ("force", 1, &ClampControl::force_Callback, this);
 		stretch_sub = nh.subscribe<std_msgs::Float32> ("stretch_length", 1, &ClampControl::stretch_Callback, this);
-        joystick_override_sub = nh_.subscribe("/joy", 1, &ClampControl::joy_override, this);
+        joystick_override_sub = nh_.subscribe("/joy", 1, &ClampControl::joystickCallback, this);
 
         //signal(SIGINT, ClampControl::shutdownHandler);
 
@@ -173,7 +173,7 @@ public:
 		control_mode = msg -> data;
 	}
 
-    void joy_override(const sensor_msgs::Joy::ConstPtr& msg)
+    void joystickCallback(const sensor_msgs::Joy::ConstPtr& msg)
     {
         // Update timeout time
         timeout_start = getWallTime();
@@ -201,6 +201,10 @@ public:
     	std_msgs::Float32 clamp_grasp_msg;
         clamp_movement_msg.data = 0.0;
         clamp_grasp_msg.data = 0.0;
+
+        // DEBUG:
+        std::cout << "[clamp_contro]: publishing clamp movement stop command\n";
+
         clamp_movement_pub.publish(clamp_movement_msg);
     	clamp_grasp_pub.publish(clamp_grasp_msg);
     }
@@ -319,97 +323,91 @@ bool checkControlMode(int mode, std::vector<int> vector_of_modes)
 
 void ClampControl::controller()
 {
-    // DEBUG:
-    std::cout << "Operating mode: " << operation_mode << "\n";
+    if (checkControlMode(control_mode, available_control_modes)) {
+        // DEBUG:
+        std::cout << "Operating mode: " << operation_mode << "\n";
 
-    /* Operating Modes
-     * 0 = Lowering the clamp
-     * 1 = Opneing the clamp
-     * 2 = Begin approach and wait for stretch sensor
-     * 3 = Close the clamp and check force sensor for grasp
-     * 4 = Raise the clamp
-     * 5 = Indicate whether the grasp was successful
-     */
+        /* Operating Modes
+         * 0 = Lowering the clamp
+         * 1 = Opneing the clamp
+         * 2 = Begin approach and wait for stretch sensor
+         * 3 = Close the clamp and check force sensor for grasp
+         * 4 = Raise the clamp
+         * 5 = Indicate whether the grasp was successful
+         */
 
-	// Picking operation
-	if (checkControlMode(control_mode, available_control_modes))
-	{
-		if (operation_mode == 0)
-		{
+    	// Picking operation
+    	if (operation_mode == 0)
+    	{
             std::cout << "Lowering\n";
-			lower_clamp();
-		}
-		if (operation_mode == 1)
-		{
+    		lower_clamp();
+    	}
+    	if (operation_mode == 1)
+    	{
             std::cout << "Opening\n";
-			open_clamp();
-		}
-		if (operation_mode == 2)
-		{
+    		open_clamp();
+    	}
+    	if (operation_mode == 2)
+    	{
             std::cout << "Stretch checking\n";
-			stretch_check();
+    		stretch_check();
             std::cout << "Stretch: " << clamp_plate_status << "\n";
             if (clamp_plate_status)
             {
                 operation_mode = 3;
             }
-		}
-		if (operation_mode == 3)
-		{
+    	}
+    	if (operation_mode == 3)
+    	{
             std::cout << "Closing and grasping\n";
             stretch_check();
             std::cout << "Stretch: " << clamp_plate_status << "\n";
-			close_clamp();
-			check_grasp();
-		}
-		if (operation_mode == 4)
-		{
+    		close_clamp();
+    		check_grasp();
+    	}
+    	if (operation_mode == 4)
+    	{
             std::cout << "Raising\n";
-			raise_clamp();
-		}
-		if (operation_mode == 5)
-		{
+    		raise_clamp();
+    	}
+    	if (operation_mode == 5)
+    	{
             std::cout << "Grasp successful!\n";
-			grasp_status == true;
+    		grasp_status == true;
             std_msgs::Bool grasp_finished_msg;
             grasp_finished_msg.data = true;
             grasp_finished_pub.publish(grasp_finished_msg);
 
             // FIXME: add this in when you create a service from the control handler that receives the success message and then changes the controller type before letting the operation mode turn to 0
             //operation_mode = 0;
-		}
-	}
-	else
-	{
-		clamp_grasp = 0.0;
-		clamp_movement = 0.0;
-	}
+    	}
 
-	std_msgs::Float32 clamp_movement_msg;
-	std_msgs::Float32 clamp_grasp_msg;
-	std_msgs::Bool clamp_plate_status_msg;
+    	std_msgs::Float32 clamp_movement_msg;
+    	std_msgs::Float32 clamp_grasp_msg;
+    	std_msgs::Bool clamp_plate_status_msg;
 
-    if (manual_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
-        // Send no command
-    }
-    else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
-        // Send clamp control commands
-        clamp_movement_msg.data = clamp_movement;
-    	clamp_grasp_msg.data = clamp_grasp;
-        clamp_movement_pub.publish(clamp_movement_msg);
-    	clamp_grasp_pub.publish(clamp_grasp_msg);
-    }
-    else {
-        // Joystick has timed out, send 0 velocity commands for clamp
-        clamp_movement_msg.data = 0;
-    	clamp_grasp_msg.data = 0;
-        clamp_movement_pub.publish(clamp_movement_msg);
-    	clamp_grasp_pub.publish(clamp_grasp_msg);
-    }
+        if (manual_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send no command
+        }
+        else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send clamp control commands
+            clamp_movement_msg.data = clamp_movement;
+        	clamp_grasp_msg.data = clamp_grasp;
+            clamp_movement_pub.publish(clamp_movement_msg);
+        	clamp_grasp_pub.publish(clamp_grasp_msg);
+        }
+        else {
+            // Joystick has timed out, send 0 velocity commands for clamp
+            clamp_movement_msg.data = 0;
+        	clamp_grasp_msg.data = 0;
+            clamp_movement_pub.publish(clamp_movement_msg);
+        	clamp_grasp_pub.publish(clamp_grasp_msg);
+        }
 
-    // Stretch sensor status can be sent everytime
-    clamp_plate_status_msg.data = clamp_plate_status;
-    clamp_plate_status_pub.publish(clamp_plate_status_msg);
+        // Stretch sensor status can be sent everytime
+        clamp_plate_status_msg.data = clamp_plate_status;
+        clamp_plate_status_pub.publish(clamp_plate_status_msg);
+    }
 }
 
 //============================================================================//
