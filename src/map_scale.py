@@ -23,7 +23,7 @@ class MapScale:
         img = np.asarray(msg.data, dtype='uint8')
 
         # Convert all of the -1 spces (value = 255 when an 'uint8'
-        img[np.where(img == 255)[0]] = 100
+        img[np.where(img != 0)[0]] = 100
         img = np.reshape(img, [img_height, img_width, 1])
 
         # Decrease the rsolution of the map

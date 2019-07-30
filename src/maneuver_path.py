@@ -654,7 +654,8 @@ class ManeuverPath:
             # raw_input("Pause")
 
             # Initial value for optimization
-            x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
+            #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
+            x0 = [-11.5, 6.8, 2.2, -0.4, -1.6, 1.0, 1.4]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
@@ -699,13 +700,13 @@ class ManeuverPath:
                 ineq_con = {'type': 'ineq',
                             'fun' : lambda x: self.maneuverIneqConstraints(x, params),
                             'jac' : None}
-                bounds = [(-20, 20),
-                          (-20, 20),
+                bounds = [(-20, 2),
+                          (-16, 5),
                           (-np.pi, np.pi),
-                          (-10*np.pi, 10*np.pi),
+                          (-5*np.pi, 5*np.pi),
                           (-np.pi, np.pi),
-                          (self.min_radius, 10*np.pi),
-                          (np.pi/4, np.pi)]
+                          (self.min_radius, 5*np.pi),
+                          (np.pi/10, np.pi)]
 
                 # Optimize
                 tic = time.time()
@@ -728,6 +729,9 @@ class ManeuverPath:
                 alpha_1 = res.x[4]
                 r_2 = res.x[5]
                 alpha_2 = res.x[6]
+
+                self.optimization_success = res.success
+                message = res.message
             #==================================================================#
             # scipy.optimize.minimize optimizer
             #==================================================================#
@@ -741,8 +745,8 @@ class ManeuverPath:
                 x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
 
                 nvar = 7
-                x_L = np.array([-20, -20, -np.pi, -10*np.pi, -np.pi, self.min_radius, np.pi/4], dtype=np.float_)
-                x_U = np.array([20, 20, np.pi, 10*np.pi, np.pi, 10*np.pi, np.pi], dtype=np.float_)
+                x_L = np.array([-20, -16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10], dtype=np.float_)
+                x_U = np.array([2, 5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi], dtype=np.float_)
 
                 ncon = 2
                 g_L = np.array([0, 0], dtype=np.float_)
@@ -768,20 +772,20 @@ class ManeuverPath:
                     else:
                         return self.gradManeuverIneqConstraints(x, params)
 
-                pyipopt.set_loglevel(0)
                 nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
+                pyipopt.set_loglevel(0)
 
                 tic = time.time()
                 x, zl, zu, constraint_multipliers, obj, status = nlp.solve(x0_ip)
                 nlp.close()
                 toc = time.time()
 
-                # def print_variable(variable_name, value):
-                #     for i in range(len(value)):
-                #         print("{} {}".format(variable_name + "["+str(i)+"] =", value[i]))
-                #
-                # print("Solution of the primal variables, x")
-                # print_variable("x", x)
+                def print_variable(variable_name, value):
+                    for i in range(len(value)):
+                        print("{} {}".format(variable_name + "["+str(i)+"] =", value[i]))
+
+                print("Solution of the primal variables, x")
+                print_variable("x", x)
                 #
                 # print("Solution of the bound multipliers, z_L and z_U")
                 # print_variable("z_L", zl)
@@ -808,10 +812,29 @@ class ManeuverPath:
                 alpha_1 = x[4]
                 r_2 = x[5]
                 alpha_2 = x[6]
+
+                self.optimization_success = (status > 0)
+                message = "ipopt optimization finished with status: {0:d}".format(status)
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
 
+
+            #=================================================================#
+            # Use hardcoded value
+            #=================================================================#
+            use_hardcoded = False
+            if (use_hardcoded):
+                x_s = x0[0]
+                y_s = x0[1]
+                theta_s = x0[2]
+                r_1 = x0[3]
+                alpha_1 = x0[4]
+                r_2 = x0[5]
+                alpha_2 = x0[6]
+
+                self.optimization_success = 1
+                message = "used hardcoded starting value"
 
             # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
             r_2 = -np.sign(r_1)*r_2
@@ -861,7 +884,6 @@ class ManeuverPath:
             path2_gear_msg.gear = np.sign(alpha_2)
             self.path2_gear_pub.publish(path2_gear_msg)
 
-            self.optimization_success = res.success
 
             if (self.optimization_success):
                 # If optimization was successful, publish the new target
@@ -884,7 +906,7 @@ class ManeuverPath:
 
                 self.approach_pose_pub.publish(approach_start_pose)
 
-            return self.optimization_success, res.message
+            return self.optimization_success, message
 
         else:
             return False, "No target pose exists"

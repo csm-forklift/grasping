@@ -30,7 +30,7 @@
     <!-- Clamp Control -->
     <!--===============-->
     <!-- The arduino running this code should be a MEGA and should be running "grasping/src/clamp_switch/clamp_switch.ino", see file for wiring -->
-    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="false">
+    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="true">
         <param name="port" value="$(arg port_clamp)" />
     </node>
     
