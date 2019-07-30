@@ -16,15 +16,11 @@ from nav_msgs.msg import Path, OccupancyGrid, Odometry
 from std_msgs.msg import Bool
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 import tf
-#import numpy as np
-import autograd.numpy as np
-from autograd import grad, jacobian, hessian
-import pyipopt
+import numpy as np
 from scipy.spatial import ConvexHull
 from scipy.optimize import minimize
 import math
 from inPolygon import pointInPolygon
-import time
 
 
 class Pose2D:
@@ -88,7 +84,6 @@ class ManeuverPath:
         self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 6.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
         self.roll_radius = rospy.get_param("/roll/radius", 0.20)
         self.resolution = rospy.get_param("~maneuver_resolution", 0.10) # resolution for determining number of waypoints in the maneuver paths
-        self.rescale_factor = rospy.get_param("~rescale_factor", 0.5) # Decreases the resolution of the image along each axis by this fraction
 
         self.target_x = None
         self.target_y = None
@@ -106,7 +101,7 @@ class ManeuverPath:
         self.base_to_back = rospy.get_param("/forklift/body/base_to_back", 1.9472) # {m}
         self.width = rospy.get_param("/forklift/body/width", 1.3599) # {m}
         self.total_length = rospy.get_param("/forklift/body/total", 3.5659) # {m}
-        self.buffer = 0.5 # {m} gap between edge of forklift and the bounding box
+        self.buffer = 1.0 # {m} gap between edge of forklift and the bounding box
 
         '''
         Forklift Bounding Box
@@ -154,7 +149,7 @@ class ManeuverPath:
         self.obstacle_path_sub = rospy.Subscriber("/obstacle_avoidance_path", Path, self.obstaclePathCallback, queue_size=1)
 
         # indicates whether the optimzation completed successfully or not, to know whether the path is usable
-        self.optimize_maneuver_srv = rospy.Service("~optimize_maneuver", OptimizeManeuver, self.maneuverService)
+        self.optimize_maneuver_srv = rospy.Service("~optimize_maneuver", OptimizeManeuver, self.optimizeManeuver)
 
     def spin(self):
         while not rospy.is_shutdown():
@@ -191,7 +186,7 @@ class ManeuverPath:
         theta_m = theta_s + np.sign(r_1)*alpha_1
         pos_s = np.array([x_s, y_s])
         R1 = rotZ2D(theta_s)
-        pos_m = pos_s + np.dot(R1, np.array([np.abs(r_1)*np.sin(alpha_1), r_1*(1 - np.cos(alpha_1))]))
+        pos_m = pos_s + R1.dot(np.array([np.abs(r_1)*np.sin(alpha_1), r_1*(1 - np.cos(alpha_1))]))
 
         # Make second parameters opposite signs of the first
         r_2 = -np.sign(r_1)*r_2
@@ -200,7 +195,7 @@ class ManeuverPath:
         # Calculate parameters for the final pose
         theta_f = theta_m + np.sign(r_2)*alpha_2
         R2 = rotZ2D(theta_m)
-        pos_f = pos_m + np.dot(R2, np.array([np.abs(r_2)*np.sin(alpha_2), r_2*(1 - np.cos(alpha_2))]))
+        pos_f = pos_m + R2.dot(np.array([np.abs(r_2)*np.sin(alpha_2), r_2*(1 - np.cos(alpha_2))]))
 
         # Save middle and final pose as Pose2D objects
         pose_m = Pose2D(pos_m[0], pos_m[1], theta_m)
@@ -291,7 +286,7 @@ class ManeuverPath:
 
         points = []
         for i in range(len(corners)):
-            points.append(np.array([x, y]) + np.dot(R_forklift, corners[i]))
+            points.append(np.array([x, y]) + R_forklift.dot(corners[i]))
 
         return np.asarray(points)
 
@@ -545,6 +540,9 @@ class ManeuverPath:
         r_2 = x[5]
         alpha_2 = x[6]
 
+        # Initialize constraints
+        C = np.zeros(2)
+
         # Convert states to poses
         pose_s = Pose2D(x_s, y_s, theta_s)
 
@@ -552,47 +550,18 @@ class ManeuverPath:
         [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, r_2, alpha_2)
 
         # Frist constraint
-        C_0 = -self.obstaclesInManeuver(pose_s, pose_m, pose_f, params["obstacles"])
+        C[0] = -self.obstaclesInManeuver(pose_s, pose_m, pose_f, params["obstacles"])
 
         # Second constraint
-        C_1 = abs(x[3]) - params["min_radius"]
-
-        C = np.array([C_0, C_1])
+        C[1] = abs(x[3]) - params["min_radius"]
 
         return C
 
-    def gradManeuverIneqConstraints(self, x, params):
-        '''
-        Calculates the gradient for the constraints function using the finite
-        differencing method.
-
-        Args:
-        -----
-        x: input array for the constraints function, see
-            'maneuverIneqConstraints' description for details
-
-        Returns:
-        --------
-        g: 14x1 array containing the gradient of the constraints, the first 7
-            elements are for the first constraint and the second 7 are for the
-            second constraint
-        '''
-        g = np.zeros(2*x.size)
-        delta = 0.00000001
-        for i in range(x.size):
-            dx = x
-            dx[i] = dx[i] + delta
-            dC = (self.maneuverIneqConstraints(dx, params) - self.maneuverIneqConstraints(x, params)) / delta
-            g[i] = dC[0]
-            g[i+x.size] = dC[1]
-
-        return g
-
-
-    def optimizeManeuver(self):
+    def optimizeManeuver(self, req):
         '''
         Sets up the optimization problem then calculates the optimal maneuver
-        poses. Publishes the resulting path if the optimization is successful.
+        poses. Runs when any message is sent to the corresponding subscriber,
+        the 'msg' value does not matter.
 
         Args:
         -----
@@ -622,7 +591,7 @@ class ManeuverPath:
                     self.current_pose.orientation.z = rot[2]
                     self.current_pose.orientation.w = rot[3]
                 except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                    return False, "Error looking up transform from 'odom' to 'base_link'"
+                    return OptimizeManeuverResponse(False, "Error looking up transform from 'odom' to 'base_link'")
 
             # DEBUG:
             print("Running maneuver optimization...")
@@ -653,11 +622,10 @@ class ManeuverPath:
             # self.path_pub.publish(self.maneuver_path)
             # raw_input("Pause")
 
-            # Initial value for optimization
             x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
-
             # Set params
-            # TODO: add the forklifts current pose from "/odom"
+            # TODO:
+            # add the forklifts current pose from "/odom"
             current_pose2D = Pose2D()
             current_pose2D.x = self.current_pose.position.x
             current_pose2D.y = self.current_pose.position.y
@@ -666,152 +634,36 @@ class ManeuverPath:
 
             params = {"current_pose" : [current_pose2D.x,current_pose2D.y,current_pose2D.theta], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 0.1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
 
-            #==================================================================#
-            # vvv Add Autograd gradient functions here if you get to it vvv
-            #==================================================================#
-            # Generate Gradient Functions
-            self.grad_maneuverObjective = grad(lambda x: self.maneuverObjective(x, params))
-            self.hessian_maneuverObjective = hessian(lambda x: self.maneuverObjective(x, params))
+            # Set up optimization problem
+            obj = lambda x: self.maneuverObjective(x, params)
+            ineq_con = {'type': 'ineq',
+                        'fun' : lambda x: self.maneuverIneqConstraints(x, params),
+                        'jac' : None}
+            bounds = [(-20, 20),
+                      (-20, 20),
+                      (-np.pi, np.pi),
+                      (-10*np.pi, 10*np.pi),
+                      (-np.pi, np.pi),
+                      (self.min_radius, 10*np.pi),
+                      (np.pi/4, np.pi)]
 
-            # # Test Gradients against finite difference method
-            # delta = 0.0000001
-            # x = np.array([1, 1, 1, 1, 1, 1, 1], dtype=np.float)
-            # dx = np.array([1, 1+delta, 1, 1, 1, 1, 1], dtype=np.float_)
-            # print("Autograd:")
-            # print(self.grad_maneuverObjective(x))
-            # print("Finite Difference:")
-            # print((self.maneuverObjective(dx, params) - self.maneuverObjective(x, params))/delta)
-            # print("Hessian:")
-            # print(self.hessian_maneuverObjective(x))
-            # print("Constraint Jacobian:")
-            # print(self.gradManeuverIneqConstraints(x, params))
-            #==================================================================#
-            # ^^^ Add Autograd gradient functions here if you get to it ^^^
-            #==================================================================#
+            # Optimize
+            res = minimize(obj, x0, method='SLSQP', bounds=bounds, constraints=ineq_con)
 
-            #==================================================================#
-            # scipy.optimize.minimize optimizer
-            #==================================================================#
-            use_scipy = True
-            if (use_scipy):
-                # Set up optimization problem
-                obj = lambda x: self.maneuverObjective(x, params)
-                ineq_con = {'type': 'ineq',
-                            'fun' : lambda x: self.maneuverIneqConstraints(x, params),
-                            'jac' : None}
-                bounds = [(-20, 20),
-                          (-20, 20),
-                          (-np.pi, np.pi),
-                          (-10*np.pi, 10*np.pi),
-                          (-np.pi, np.pi),
-                          (self.min_radius, 10*np.pi),
-                          (np.pi/4, np.pi)]
+            # DEBUG:
+            print("===== Optimization Results =====")
+            print("Success: %s" % res.success)
+            print("Message: %s" % res.message)
+            print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (res.x[0], res.x[1], res.x[2], res.x[3], res.x[4], res.x[5], res.x[6]))
 
-                # Optimize
-                tic = time.time()
-                res = minimize(obj, x0, jac=self.grad_maneuverObjective, method='SLSQP', bounds=bounds, constraints=ineq_con)
-                # res = minimize(obj, x0, method='BFGS', bounds=bounds, constraints=ineq_con)
-                toc = time.time()
-
-                # DEBUG:
-                print("===== Optimization Results =====")
-                print("time: %f(sec)" % (toc - tic))
-                print("Success: %s" % res.success)
-                print("Message: %s" % res.message)
-                print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (res.x[0], res.x[1], res.x[2], res.x[3], res.x[4], res.x[5], res.x[6]))
-
-                # Store result
-                x_s = res.x[0]
-                y_s = res.x[1]
-                theta_s = res.x[2]
-                r_1 = res.x[3]
-                alpha_1 = res.x[4]
-                r_2 = res.x[5]
-                alpha_2 = res.x[6]
-            #==================================================================#
-            # scipy.optimize.minimize optimizer
-            #==================================================================#
-
-            #==================================================================#
-            # IPOPT Optimizer
-            #==================================================================#
-            use_ipopt = False
-            if (use_ipopt):
-                # Initial value for optimization
-                x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
-
-                nvar = 7
-                x_L = np.array([-20, -20, -np.pi, -10*np.pi, -np.pi, self.min_radius, np.pi/4], dtype=np.float_)
-                x_U = np.array([20, 20, np.pi, 10*np.pi, np.pi, 10*np.pi, np.pi], dtype=np.float_)
-
-                ncon = 2
-                g_L = np.array([0, 0], dtype=np.float_)
-                g_U = np.array([0, pyipopt.NLP_UPPER_BOUND_INF], dtype=np.float_)
-
-                nnzj = nvar*ncon
-                nnzh = nvar**2
-
-                def eval_f(x):
-                    return self.maneuverObjective(x, params)
-
-                def eval_grad_f(x):
-                    return self.grad_maneuverObjective(x)
-
-                def eval_g(x):
-                    return self.maneuverIneqConstraints(x, params)
-
-                def eval_jac_g(x, flag):
-                    if flag:
-                        rows = np.concatenate((np.ones(nvar)*0, np.ones(nvar)*1))
-                        cols = np.concatenate((np.linspace(0,nvar-1,nvar), np.linspace(nvar,2*nvar-1,nvar)))
-                        return (rows, cols)
-                    else:
-                        return self.gradManeuverIneqConstraints(x, params)
-
-                pyipopt.set_loglevel(0)
-                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
-
-                tic = time.time()
-                x, zl, zu, constraint_multipliers, obj, status = nlp.solve(x0_ip)
-                nlp.close()
-                toc = time.time()
-
-                # def print_variable(variable_name, value):
-                #     for i in range(len(value)):
-                #         print("{} {}".format(variable_name + "["+str(i)+"] =", value[i]))
-                #
-                # print("Solution of the primal variables, x")
-                # print_variable("x", x)
-                #
-                # print("Solution of the bound multipliers, z_L and z_U")
-                # print_variable("z_L", zl)
-                # print_variable("z_U", zu)
-                #
-                # print("Solution of the constraint multipliers, lambda")
-                # print_variable("lambda", constraint_multipliers)
-                #
-                # print("Objective value")
-                # print("f(x*) = {}".format(obj))
-
-                # DEBUG:
-                print("===== Optimization Results (IPOPT) =====")
-                print("time: %f" % (toc - tic))
-                print("Success: %s" % status)
-                print("Message: %s" % "")
-                print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (x[0], x[1], x[2], x[3], x[4], x[5], x[6]))
-
-                # Store result
-                x_s = x[0]
-                y_s = x[1]
-                theta_s = x[2]
-                r_1 = x[3]
-                alpha_1 = x[4]
-                r_2 = x[5]
-                alpha_2 = x[6]
-            #==================================================================#
-            # IPOPT Optimizer
-            #==================================================================#
-
+            # Store result
+            x_s = res.x[0]
+            y_s = res.x[1]
+            theta_s = res.x[2]
+            r_1 = res.x[3]
+            alpha_1 = res.x[4]
+            r_2 = res.x[5]
+            alpha_2 = res.x[6]
 
             # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
             r_2 = -np.sign(r_1)*r_2
@@ -884,10 +736,10 @@ class ManeuverPath:
 
                 self.approach_pose_pub.publish(approach_start_pose)
 
-            return self.optimization_success, res.message
+            return OptimizeManeuverResponse(self.optimization_success, res.message)
 
         else:
-            return False, "No target pose exists"
+            return OptimizeManeuverResponse(False, "No target pose exists")
 
 
     def occupancyGridCallback(self, msg):
@@ -942,10 +794,7 @@ class ManeuverPath:
 
     def obstaclePathCallback(self, msg):
         '''
-        Stores the obstacle avoidance path generated by the path planner for
-        determining where to update the final point of the path in order to
-        accomodate the robots pose at the end of the obstacle path and the start
-        of the maneuver's first segment.
+        Stores the obstacle avoidance path generated by the path planner for determining where to update the final point of the path in order to accomodate the robots pose at the end of the obstacle path and the start of the maneuver's first segment.
 
         Args:
         -----
@@ -976,30 +825,6 @@ class ManeuverPath:
             rospy.set_param("/control_panel_node/goal_x", float(new_target[0]))
             rospy.set_param("/control_panel_node/goal_y", float(new_target[1]))
             self.update_obstacle_end_pose = False
-
-    def maneuverService(self, req):
-        '''
-        Receives the service request and runs the optimization function. Any
-        other path generation logic should be implemented in here.
-
-        Args:
-        -----
-        req: the service request message
-
-        Returns:
-        --------
-        resp: the service response message, contains success status and a
-            message
-        '''
-        #======================================================================#
-        # Perform any preliminary logic conditions here
-        #======================================================================#
-        # This is where you can handle deciding whether an optimization is necessary or not or which options/conditiions to use.
-
-        #===== Perform Optimization =====#
-        success, message = self.optimizeManeuver()
-        return OptimizeManeuverResponse(success, message)
-
 
 if __name__ == "__main__":
     try:

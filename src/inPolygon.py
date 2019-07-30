@@ -65,7 +65,7 @@ def rayIntersectsSegment(point_in, segment):
     # If the point is equal with one of the points in the Y dimension, increase
     # its Y position by a small amount
     if (point[1] == segment[0,1] or point[1] == segment[1,1]):
-        point[1] += 0.000001
+        point[1] = point[1] + 0.000001
 
     # Find the top and bottom points in the Y direction
     if (segment[0,1] > segment[1,1]):
