@@ -5,6 +5,8 @@ represented by a vector of points.
 
 
 import numpy as np
+import autograd.numpy as anp
+import math
 import copy
 
 
@@ -94,8 +96,12 @@ def rayIntersectsSegment(point_in, segment):
         # angle, then the ray crosses the segment. If they are equal, the point
         # is on the segment. If the point angle is smaller, the ray does not
         # cross.
-        segment_angle = np.arctan2(top[1] - bottom[1], top[0] - bottom[0])
-        point_angle = np.arctan2(point[1] - bottom[1], point[0] - bottom[0])
+        # # NOTE: use these equations for normal operation
+        # segment_angle = np.arctan2(top[1] - bottom[1], top[0] - bottom[0])
+        # point_angle = np.arctan2(point[1] - bottom[1], point[0] - bottom[0])
+        # NOTE: use these equations for autograd automatic differentiation
+        segment_angle = anp.arctan2(top[1] - bottom[1], top[0] - bottom[0])
+        point_angle = anp.arctan2(point[1] - bottom[1], point[0] - bottom[0])
 
         # Check angle between point, bottom of segment, and positive X direction
         if (point_angle > segment_angle):

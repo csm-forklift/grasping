@@ -410,12 +410,29 @@ class ManeuverPath:
         --------
         num_obstacles: number of obstacles within the maneuver bounding box
         '''
-        # Create polygon of points representing the bounding box
-        polygon = self.maneuverBoundingBox(pose_s, pose_m, pose_f)
+        # FIXME: Currently removed to allow more feasible area and to perform an automatic differentiation using 'autograd'. It does not like "ConvexHull" method from scipy.
+        # #===== Convex Hull Method =====#
+        # # Create polygon of points representing the bounding box
+        # polygon = self.maneuverBoundingBox(pose_s, pose_m, pose_f)
+        # # Determine which points are inside the boundary
+        # [points_in, points_on] = pointInPolygon(obstacles, polygon)
+        # num_obstacles = np.sum(points_in)
 
-        # Determine which points are inside the boundary
-        [points_in, points_on] = pointInPolygon(obstacles, polygon)
+        #===== Box around three poses only =====#
+        # Generate full list of bounding box points
+        points_s = self.forkliftBoundingBox(pose_s)
+        points_s = np.vstack((points_s, points_s[0,:]))
+        points_m = self.forkliftBoundingBox(pose_m)
+        points_m = np.vstack((points_m, points_m[0,:]))
+        points_f = self.forkliftBoundingBox(pose_f)
+        points_f = np.vstack((points_f, points_f[0,:]))
+        # Determine which points are inside the boundaries
+        [points_in, points_on] = pointInPolygon(obstacles, points_s)
         num_obstacles = np.sum(points_in)
+        [points_in, points_on] = pointInPolygon(obstacles, points_m)
+        num_obstacles = num_obstacles + np.sum(points_in)
+        [points_in, points_on] = pointInPolygon(obstacles, points_f)
+        num_obstacles = num_obstacles + np.sum(points_in)
 
         return num_obstacles
 
@@ -673,19 +690,25 @@ class ManeuverPath:
             # Generate Gradient Functions
             self.grad_maneuverObjective = grad(lambda x: self.maneuverObjective(x, params))
             self.hessian_maneuverObjective = hessian(lambda x: self.maneuverObjective(x, params))
+            self.jac_maneuverIneqConstraints = jacobian(lambda x: self.maneuverIneqConstraints(x, params))
+            self.hessian_maneuverIneqConstraints = hessian(lambda x: self.maneuverIneqConstraints(x, params))
 
             # # Test Gradients against finite difference method
             # delta = 0.0000001
-            # x = np.array([1, 1, 1, 1, 1, 1, 1], dtype=np.float)
-            # dx = np.array([1, 1+delta, 1, 1, 1, 1, 1], dtype=np.float_)
+            # x = np.array([-5, -3, 1, 1, 1, 1, 1], dtype=np.float)
+            # dx = x
             # print("Autograd:")
             # print(self.grad_maneuverObjective(x))
             # print("Finite Difference:")
             # print((self.maneuverObjective(dx, params) - self.maneuverObjective(x, params))/delta)
             # print("Hessian:")
             # print(self.hessian_maneuverObjective(x))
+            # print("Autograd con:")
+            # print(self.jac_maneuverIneqConstraints(x))
             # print("Constraint Jacobian:")
             # print(self.gradManeuverIneqConstraints(x, params))
+            # print("Hessian con:")
+            # print(self.hessian_maneuverIneqConstraints(x))
             #==================================================================#
             # ^^^ Add Autograd gradient functions here if you get to it ^^^
             #==================================================================#
@@ -693,13 +716,13 @@ class ManeuverPath:
             #==================================================================#
             # scipy.optimize.minimize optimizer
             #==================================================================#
-            use_scipy = True
+            use_scipy = False
             if (use_scipy):
                 # Set up optimization problem
                 obj = lambda x: self.maneuverObjective(x, params)
                 ineq_con = {'type': 'ineq',
                             'fun' : lambda x: self.maneuverIneqConstraints(x, params),
-                            'jac' : None}
+                            'jac' : self.jac_maneuverIneqConstraints}
                 bounds = [(-20, 2),
                           (-16, 5),
                           (-np.pi, np.pi),
@@ -739,7 +762,7 @@ class ManeuverPath:
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
-            use_ipopt = False
+            use_ipopt = True
             if (use_ipopt):
                 # Initial value for optimization
                 x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
@@ -770,9 +793,24 @@ class ManeuverPath:
                         cols = np.concatenate((np.linspace(0,nvar-1,nvar), np.linspace(nvar,2*nvar-1,nvar)))
                         return (rows, cols)
                     else:
-                        return self.gradManeuverIneqConstraints(x, params)
+                        return self.jac_maneuverIneqConstraints(x)
 
-                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
+                def eval_h(x, lagrange, obj_factor, flag):
+                    if flag:
+                        rows = np.array([])
+                        for i in range(nvar*ncon):
+                            rows = np.concatenate((rows, np.ones(nvar)*i))
+                        cols = np.array([])
+                        for i in range(nvar*ncon):
+                            cols = np.concatenate((cols, np.linspace(0,nvar-1,nvar)))
+                        return (rows, cols)
+                    else:
+                        constraint_hessian = self.hessian_maneuverIneqConstraints(x)
+                        constraint_sum = lagrange[0]*constraint_hessian[0,:,:]
+                        constraint_sum = constraint_sum + lagrange[1]*constraint_hessian[1,:,:]
+                        return obj_factor*self.hessian_maneuverObjective(x) + constraint_sum
+
+                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g, eval_h)
                 pyipopt.set_loglevel(0)
 
                 tic = time.time()
@@ -818,7 +856,6 @@ class ManeuverPath:
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
-
 
             #=================================================================#
             # Use hardcoded value

@@ -229,6 +229,7 @@ public:
 
             publishMessages();
             ros::spinOnce();
+            rate.sleep();
 
             if (!checkControlMode(control_mode, available_control_modes)) {
                 break;
@@ -243,6 +244,9 @@ public:
     {
         // Control sequence for approaching the roll
         while (stretch_on == false && ros::ok()) {
+            // Get pose of base_link on the forklift
+            getForkliftPose();
+            
             // Calculate forklift's new target position in the odom frame
             tf::TransformListener listener;
             tf::StampedTransform transform;
@@ -319,7 +323,7 @@ public:
             publishMessages();
 
             // DEBUG:
-            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, align: %0.03f, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, cos(theta_error), movement_velocity);
+            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, stretch: %d, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, stretch_on, movement_velocity);
 
             // Update states
             ros::spinOnce();
@@ -378,6 +382,33 @@ public:
     {
         // Update stretch sensor state
         stretch_on = msg.data;
+    }
+    
+    void getForkliftPose(void)
+    {
+        // Update previous position
+        prev_forklift_target_x = forklift_target_x;
+        prev_forklift_target_y = forklift_target_y;
+
+        // Update forklift current position and heading
+        tf::TransformListener listener;
+        tf::StampedTransform transform;
+        listener.waitForTransform("/odom", "/base_link", ros::Time(0), ros::Duration(1.0));
+        listener.lookupTransform("/odom", "/base_link", ros::Time(0), transform);
+
+        forklift_x = transform.getOrigin().x();
+        forklift_y = transform.getOrigin().y();
+        tf::Quaternion forklift_q(
+            transform.getRotation().x(),
+            transform.getRotation().y(),
+            transform.getRotation().z(),
+            transform.getRotation().w()
+        );
+
+        tf::Matrix3x3 m(forklift_q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
+        forklift_heading = yaw;
     }
 
     void odomCallback(const nav_msgs::Odometry &msg)
