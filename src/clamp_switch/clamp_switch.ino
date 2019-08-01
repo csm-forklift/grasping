@@ -42,12 +42,14 @@ int limit_switch_up = 7;
 int limit_switch_down = 6;
 int limit_switch_open = 5;
 int limit_switch_close = 4;
+int limit_switch_plate = A1;
 
 const int led = 13;
 bool switch_status_up;
 bool switch_status_down;
 bool switch_status_open;
 bool switch_status_close;
+bool switch_status_plate;
 
 // Force Sensitive Resistor
 int fsrPin = A0;
@@ -55,7 +57,7 @@ int16_t fsrReading;
 
 
 // Stretch sensor
-int stretch_sensor_1_pin = A1;
+//int stretch_sensor_1_pin = A1;
 int stretch_sensor_2_pin = A2;
 
 // Clamp switch
@@ -85,10 +87,12 @@ std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
 std_msgs::Bool switch_close_msg;
+std_msgs::Bool switch_plate_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
+ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -125,6 +129,8 @@ void setup()
   pinMode(led, OUTPUT);
   digitalWrite(led, HIGH);
   nh.advertise(limit_switch_close_pub);
+
+  pinMode(limit_switch_plate, INPUT);
 
   // FSR
   nh.advertise(force_pub);
@@ -211,6 +217,18 @@ void loop()
   }
   switch_close_msg.data = switch_status_close;
   limit_switch_close_pub.publish(&switch_close_msg);
+
+  // Plate
+  if (digitalRead(limit_switch_plate) == LOW)
+  {
+    switch_status_plate = true;
+  }
+  else
+  {
+    switch_status_plate = false;
+  }
+  switch_plate_msg.data = switch_status_plate;
+  limit_switch_plate_pub.publish(&switch_plate_msg);
   
   // FSR
   fsrReading = analogRead(fsrPin);
@@ -220,18 +238,18 @@ void loop()
   // Stretch sensor
   float stretch_value;
   
-  int value_1;
-  int v_1_in = 5;
-  float v_1_out = 0;
-  float r_1_1 = 10;
-  float r_1_2 = 0;
-  float val_1;
-  float buffer_1 = 0;
-  value_1 = analogRead(stretch_sensor_1_pin);
-  v_1_out = (5.0 / 1023.0) * value_1;
-  buffer_1 = (v_1_in / v_1_out) - 1;
-  r_1_2 = r_1_1 / buffer_1;
-  val_1 = 1000 / r_1_2;
+//  int value_1;
+//  int v_1_in = 5;
+//  float v_1_out = 0;
+//  float r_1_1 = 10;
+//  float r_1_2 = 0;
+//  float val_1;
+//  float buffer_1 = 0;
+//  value_1 = analogRead(stretch_sensor_1_pin);
+//  v_1_out = (5.0 / 1023.0) * value_1;
+//  buffer_1 = (v_1_in / v_1_out) - 1;
+//  r_1_2 = r_1_1 / buffer_1;
+//  val_1 = 1000 / r_1_2;
   
   int value_2;
   int v_2_in = 5;
@@ -246,7 +264,9 @@ void loop()
   r_2_2 = r_2_1 / buffer_2;
   val_2 = 1000 / r_2_2;
 
-  stretch_value = (val_1 + val_2) / 2;
+  //stretch_value = (val_1 + val_2) / 2;
+  // Currently only using one stretch sensor, the other was replaced with a limit switch
+  stretch_value = val_2;
 
 //  // DEBUG: manually set reading that is within the tolerance for plate movement
 //  // so that the plate does not have to be manually moved for the close command
