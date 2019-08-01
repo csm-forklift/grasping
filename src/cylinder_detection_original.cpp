@@ -155,14 +155,16 @@ private:
     pcl::PointCloud<PointT>::Ptr scene_cloud_left_adjustment_frame;
     pcl::PointCloud<PointT>::Ptr scene_cloud_z_filter_frame;
     Eigen::Vector3f translation;
-    Eigen::Quaternionf min_angle_rotation,max_angle_rotation, delta_angle_rotation;
+    Eigen::Quaternionf rotation;
     Eigen::Affine3f affine_transform;
 
     //===== OpenCV Objects
     cv::Mat top_image;
-    //cv::Mat top_image_fixed; // For Debugging purposes
-    //cv::Mat top_image_rgb; // For Debugging purposes
+    cv::Mat top_image_fixed;
+    cv::Mat top_image_rgb;
     cv::Mat accumulator;
+    cv::Mat accumulator_fixed;
+    cv::Mat accumulator_rgb;
     std::vector<cv::Point> potentials;
     cv::Point2d target_point;
 
@@ -174,9 +176,9 @@ public:
     scene_cloud_right_adjustment_frame(new pcl::PointCloud<PointT>),
     scene_cloud_left_adjustment_frame(new pcl::PointCloud<PointT>),
     scene_cloud_z_filter_frame(new pcl::PointCloud<PointT>),
-    scene_cloud(new pcl::PointCloud<PointT>)
-    //translation(0, 0, 0),
-    //rotation(1, 0, 0, 0) // w, x, y, z
+    scene_cloud(new pcl::PointCloud<PointT>),
+    translation(0, 0, 0),
+    rotation(1, 0, 0, 0) // w, x, y, z
     {
         //===== Load Parameters =====//
         nh_.param<std::string>("sensor", sensor_name, "sensor");
@@ -243,8 +245,8 @@ public:
         intervalStartTime = getWallTime();
 
         // Filter pointcloud height
-        filter_z_low = -0.100; // m
-        filter_z_high = 0.1500; // m
+        filter_z_low = -0.200; // m
+        filter_z_high = 0.200; // m
         resolution = 256.0; // pixels/m, 256 approx. = 1280 pixels / 5 m
         rotation_resolution = 0.01; // radians/section
         num_potentials = 5; // number of maximums to check in accumulator
@@ -265,26 +267,6 @@ public:
         use_variance_filter = true;
         use_location_filter = false;
         //=============================//
-
-
-        // Get fixed rotations and translations for the point cloud trasnforms
-
-        // Degrees are first variable of thetas. modify for desired angles of view off of center line
-        theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
-        theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
-        phi_min = (M_PI/2) - theta_min;
-        phi_max = (M_PI/2) - theta_max;
-
-        translation.x() = 0.0;
-        translation.y() = 0.0;
-        translation.z() = 0.0;
-
-        min_angle_rotation = Eigen::AngleAxisf(-1*phi_min, Eigen::Vector3f::UnitZ());
-
-        max_angle_rotation = Eigen::AngleAxisf(-1*phi_max, Eigen::Vector3f::UnitZ());
-
-        delta_angle_rotation = Eigen::AngleAxisf((phi_min+phi_max), Eigen::Vector3f::UnitZ());
-
     }
 
     void controlModeCallback(const std_msgs::Int8 &msg)
@@ -304,52 +286,13 @@ public:
         if (checkControlMode(control_mode, available_control_modes)) {
             //===== Convert PointCloud and Transform Data =====//
             // Convert ROS PointCloud2 message into PCL pointcloud
-            //rosMsgToPCL(msg, scene_cloud_optical_frame);
+            rosMsgToPCL(msg, scene_cloud_optical_frame);
+
             // Transform pointcloud into sensor frame
-            //transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, sensor_frame);
-
-            rosMsgToPCL(msg, scene_cloud_unfiltered);
-
-            //===== Preprocessing (filter, segment, etc.) =====//
-            // Try to remove the ground layer (find the minimum z level and remove a few centimeters up)
-            pcl::PassThrough<PointT> pass; // passthrough filter
-            pass.setInputCloud(scene_cloud_unfiltered);
-            pass.setFilterFieldName("z");
-            pass.setFilterLimits(filter_z_low, filter_z_high);
-
-            pass.filter(*scene_cloud_z_filter_frame);
-
-            pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, min_angle_rotation);
-
-            // Filter all points to the right of minimum view angle
-            pass.setInputCloud(scene_cloud_right_adjustment_frame);
-            pass.setFilterFieldName("x");
-            pass.setFilterLimits(0.0, 120.0);
-
-            pass.filter(*scene_cloud_right_adjustment_frame);
-
-
-            pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, delta_angle_rotation);
-
-            // Filter all points to the left of minimum view angle
-            pass.setInputCloud(scene_cloud_left_adjustment_frame);
-            pass.setFilterFieldName("x");
-            pass.setFilterLimits(0.0, 120.0);
-
-            pass.filter(*scene_cloud_left_adjustment_frame);
-
-            pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, max_angle_rotation);
-
-            // Unnecessary filter required to apply transform????
-            pass.setInputCloud(scene_cloud);
-            pass.setFilterFieldName("z");
-            pass.setFilterLimits(-120.0, 120.0);
-
-            pass.filter(*scene_cloud);
-
+            transformPointCloud(scene_cloud_optical_frame, scene_cloud_unfiltered, msg.header.frame_id, sensor_frame);
 
             // Get the bounds of the point cloud
-            pcl::getMinMax3D(*scene_cloud, min_pt, max_pt);
+            pcl::getMinMax3D(*scene_cloud_unfiltered, min_pt, max_pt);
             x_max = max_pt.x;
             x_min = min_pt.x;
             y_max = max_pt.y;
@@ -365,9 +308,83 @@ public:
             // std::cout << std::endl;
             //=================================================//
 
+            //===== Preprocessing (filter, segment, etc.) =====//
+            // Try to remove the ground layer (find the minimum z level and remove a few centimeters up)
+            pcl::PassThrough<PointT> pass; // passthrough filter
+            pass.setInputCloud(scene_cloud_unfiltered);
+            pass.setFilterFieldName("z");
+            pass.setFilterLimits(filter_z_low, filter_z_high);
 
+            pass.filter(*scene_cloud_z_filter_frame);
 
+            // PERFORM TRANSFORM FOR RIGHT ROTATION
+            // Transform frame to minimum view angle in order to remove all points in the negative x range
+            // Degrees are first variable of thetas. modify for desired angles of view off of center line
+            theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
+            theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
+            phi_min = (M_PI/2) - theta_min;
+            phi_max = (M_PI/2) - theta_max;
 
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
+
+            rotation = Eigen::AngleAxisf(-1*phi_min, Eigen::Vector3f::UnitZ());
+
+            pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, rotation);
+
+            // Filter all points to the right of minimum view angle
+            pass.setInputCloud(scene_cloud_right_adjustment_frame);
+            pass.setFilterFieldName("x");
+            pass.setFilterLimits(0.0, 120.0);
+
+            //pcl::copyPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud);
+
+            pass.filter(*scene_cloud_right_adjustment_frame);
+
+            // PERFORM TRANSFORM FOR LEFT ROTATION
+            // Transform frame to maximum view angle in order to remove all points in the negative x range
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
+
+            rotation = Eigen::AngleAxisf((phi_min+phi_max), Eigen::Vector3f::UnitZ());
+
+            pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, rotation);
+
+            // Filter all points to the left of minimum view angle
+            pass.setInputCloud(scene_cloud_left_adjustment_frame);
+            pass.setFilterFieldName("x");
+            pass.setFilterLimits(0.0, 120.0);
+
+            pass.filter(*scene_cloud_left_adjustment_frame);
+
+            //PERFORM TRANSFROM TO ORIGINAL VIEW ORIENTATION
+            // Transform frame back to original orientation to put in center of remaining view window
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
+
+            rotation = Eigen::AngleAxisf(-1*phi_max, Eigen::Vector3f::UnitZ());
+
+            pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+            /*
+            // Debug
+            translation.x() = 0.0;
+            translation.y() = 0.0;
+            translation.z() = 0.0;
+
+            rotation = Eigen::AngleAxisf(phi_min, Eigen::Vector3f::UnitZ());
+
+            pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, rotation);
+            //scene_cloud->header.frame_id = sensor_frame;
+            */
+            // Unnecessary filter required to apply transform????
+            pass.setInputCloud(scene_cloud);
+            pass.setFilterFieldName("z");
+            pass.setFilterLimits(-120.0, 120.0);
+
+            pass.filter(*scene_cloud);
 
             // TODO: filter point cloud based on angle
             /* Process
@@ -459,7 +476,7 @@ public:
             //----- Create an image fixed in place based on 'max/min_fixed_x' and 'max/min_fixed_y', for stable visualization
             int x_offset_pixels;
             int y_offset_pixels;
-            //cv::Mat top_image_fixed = generateFixedImage(top_image, x_offset_pixels, y_offset_pixels);
+            cv::Mat top_image_fixed = generateFixedImage(top_image, x_offset_pixels, y_offset_pixels);
             //=============================//
 
             //===== Circle Hough Transform =====//
@@ -499,9 +516,12 @@ public:
                 checkCenterPoints(potentials, top_image);
             }
 
+            std::vector<double> variances_out(potentials.size(), 0); // used for Mahalanobis calculations only when using radius as the feature
+
             // Filter potentials based on variance of points around circle
-            std::vector<double> variances(potentials.size(), 0);
             if (use_variance_filter) {
+                std::vector<double> variances(potentials.size(), 0);
+
                 varianceFilter(potentials, variances, top_image);
                 // cout << "\n";
                 // for (int j = 0; j < variances.size(); j++) {
@@ -522,6 +542,9 @@ public:
                 //     }
                 // }
                 // out_file.close();
+
+                variances_out = variances;
+
             }
            // cout << "After Variance: " << potentials.size() << '\n';
             // Find the point closest to the desired target
@@ -624,11 +647,18 @@ public:
                 sigma_squared_x = 1;
                 sigma_squared_y = 1;
                 target_point.x = (sigma_squared_x*mean_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
-                //sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+                sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
 
                 // Calculate new target point y value
                 target_point.y = (sigma_squared_y*mean_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
-                //sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+                sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+
+                //sigma_squared = (variances.at(i)*sigma_squared) / (variances.at(i) + sigma_squared);
+                //if (variances_out.at(i) > 10^(-9)) {
+                //    sigma_squared = (variances_out.at(i)*sigma_squared) / (variances_out.at(i) + sigma_squared);
+                //} else {
+                //    sigma_squared = sigma_squared;
+                //}
 
                 intervalStartTime = getWallTime();
                 interval_count++;
@@ -730,6 +760,50 @@ public:
             //===== Convert Point Back to Sensor Frame and Publish =====//
             //float sensor_frame_x;
             //float sensor_frame_y;
+
+            if (!potentials.empty()) {
+                imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
+                geometry_msgs::PointStamped cylinder_point;
+                cylinder_point.header = msg.header;
+                cylinder_point.header.frame_id = sensor_frame.c_str();
+                cylinder_point.point.x = sensor_frame_x;
+                cylinder_point.point.y = sensor_frame_y;
+                cylinder_point.point.z = 0;
+              //  cyl_pub.publish(cylinder_point);
+            }
+
+            // Create a marker for cylinder visualization in RVIZ
+            visualization_msgs::MarkerArray cyl_markers;
+            // Delete previous markers
+            visualization_msgs::Marker delete_markers;
+            delete_markers.action = visualization_msgs::Marker::DELETEALL;
+            cyl_markers.markers.push_back(delete_markers);
+            for (int i = 0; i < potentials.size(); ++i) {
+                // DEBUG: Show cylinder marker
+                imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
+                visualization_msgs::Marker cyl_marker;
+                cyl_marker.header = msg.header;
+                cyl_marker.header.frame_id = sensor_frame.c_str();
+                cyl_marker.id = i+1;
+                cyl_marker.type = visualization_msgs::Marker::CYLINDER;
+                cyl_marker.pose.position.x = sensor_frame_x;
+                cyl_marker.pose.position.y = sensor_frame_y;
+                cyl_marker.pose.position.z = 0;
+                cyl_marker.pose.orientation.x = 0;
+                cyl_marker.pose.orientation.y = 0;
+                cyl_marker.pose.orientation.z = 0;
+                cyl_marker.pose.orientation.w = 1.0;
+                cyl_marker.scale.x = 0.75*(2*circle_radius);
+                cyl_marker.scale.y = 0.75*(2*circle_radius);
+                cyl_marker.scale.z = 1.0;
+                cyl_marker.color.a = 1.0;
+                cyl_marker.color.r = 1.0;
+                cyl_marker.color.g = 1.0;
+                cyl_marker.color.b = 1.0;
+                cyl_marker.lifetime = ros::Duration(1/100);
+                cyl_markers.markers.push_back(cyl_marker);
+            }
+
             //marker_pub.publish(cyl_markers);
             //==========================================================//
         }
@@ -747,7 +821,7 @@ public:
         pcl::toPCLPointCloud2(*cloud, pcl_pc2);
         pcl_conversions::fromPCL(pcl_pc2, msg);
     }
-/* // This function is not used and has been commented out! we are directly using the pcl::TransformPointCloud function now!
+
     void transformPointCloud(pcl::PointCloud<PointT>::Ptr cloud_in, pcl::PointCloud<PointT>:: Ptr cloud_out, std::string frame_in, std::string frame_out)
     {
         tf::StampedTransform transform;
@@ -778,7 +852,7 @@ public:
         pcl::transformPointCloud(*cloud_in, *cloud_out, translation, rotation);
         cloud_out->header.frame_id = frame_out;
     }
-*/
+
     cv::Mat generateFixedImage(cv::Mat &image, int &x_offset_pixels, int &y_offset_pixels)
     {
         // Find the fixed range, pixels, and offset
@@ -1520,7 +1594,7 @@ public:
         geometry_msgs::PointStamped target_point;
 
         // Get transform from sensor to target frame
-        tf_listener.waitForTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.051));
+        tf_listener.waitForTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.1));
         try {
             // Transform point
             tf_listener.transformPoint(target_frame.c_str(), sensor_point, target_point);
@@ -1548,7 +1622,7 @@ public:
         target_point.point.y = target_y_in;
 
         // Get transform from target to sensor frame
-        tf_listener.waitForTransform(target_frame.c_str(), sensor_frame.c_str(), ros::Time(0), ros::Duration(0.051));
+        tf_listener.waitForTransform(target_frame.c_str(), sensor_frame.c_str(), ros::Time(0), ros::Duration(0.1));
         tf::StampedTransform transform;
         try {
             // Transform point

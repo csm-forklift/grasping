@@ -126,7 +126,7 @@ public:
 
         // Create publishers and subscribers
         control_mode_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
-        stretch_sensor_sub = nh_.subscribe("/clamp_control/stretch", 1, &ApproachController::stretchSensorCallback, this);
+        stretch_sensor_sub = nh_.subscribe("/clamp_control/clamp_plate_status", 1, &ApproachController::stretchSensorCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
@@ -223,12 +223,13 @@ public:
 
         // Give time for the steering angle to get to position
         // ros::Duration(1.0).sleep();
-        while (abs(current_steering_angle-steering_angle) > angle_tolerance) {
+        while (abs(current_steering_angle-steering_angle) > angle_tolerance && ros::ok()) {
             // Publish the new steering angle and velocity
             cout << "Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
 
             publishMessages();
             ros::spinOnce();
+            rate.sleep();
 
             if (!checkControlMode(control_mode, available_control_modes)) {
                 break;
@@ -243,6 +244,9 @@ public:
     {
         // Control sequence for approaching the roll
         while (stretch_on == false && ros::ok()) {
+            // Get pose of base_link on the forklift
+            getForkliftPose();
+            
             // Calculate forklift's new target position in the odom frame
             tf::TransformListener listener;
             tf::StampedTransform transform;
@@ -280,6 +284,7 @@ public:
 
             if(linear_velocity > approach_tolerance){
                 if (cos(theta_error) < 0) {
+                    std::cout << "Need to go backwards!\n";
                     steering_angle = -steering_angle;
                     linear_velocity = linear_velocity*5*proportional_control_linear;
                 }
@@ -288,6 +293,7 @@ public:
                 }
             }
             else{
+                std::cout << "[" << ros::this_node::getName() << "]: approach tolerance reached.\n";
                 linear_velocity = 0;
             }
 
@@ -319,7 +325,7 @@ public:
             publishMessages();
 
             // DEBUG:
-            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, align: %0.03f, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, cos(theta_error), movement_velocity);
+            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, stretch: %d, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, stretch_on, movement_velocity);
 
             // Update states
             ros::spinOnce();
@@ -378,6 +384,33 @@ public:
     {
         // Update stretch sensor state
         stretch_on = msg.data;
+    }
+    
+    void getForkliftPose(void)
+    {
+        // Update previous position
+        prev_forklift_target_x = forklift_target_x;
+        prev_forklift_target_y = forklift_target_y;
+
+        // Update forklift current position and heading
+        tf::TransformListener listener;
+        tf::StampedTransform transform;
+        listener.waitForTransform("/odom", "/base_link", ros::Time(0), ros::Duration(1.0));
+        listener.lookupTransform("/odom", "/base_link", ros::Time(0), transform);
+
+        forklift_x = transform.getOrigin().x();
+        forklift_y = transform.getOrigin().y();
+        tf::Quaternion forklift_q(
+            transform.getRotation().x(),
+            transform.getRotation().y(),
+            transform.getRotation().z(),
+            transform.getRotation().w()
+        );
+
+        tf::Matrix3x3 m(forklift_q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
+        forklift_heading = yaw;
     }
 
     void odomCallback(const nav_msgs::Odometry &msg)

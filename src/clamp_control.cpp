@@ -407,6 +407,8 @@ void ClampControl::controller()
         }
 
         // Stretch sensor status can be sent everytime
+        // update plate status
+        stretch_check();
         clamp_plate_status_msg.data = clamp_plate_status;
         clamp_plate_status_pub.publish(clamp_plate_status_msg);
     }

@@ -5,6 +5,7 @@
     <!--==========================-->
     <arg name="debug" default="false"/>
     <arg name="port_clamp" default="/dev/ttyACM0"/>
+    <arg name="roll_radius" default="0.29"/>
     <arg name="clamp_scale" default="0.5"/>
     <arg name="target_x" default="0.0"/>
     <arg name="target_y" default="0.0"/>
@@ -30,10 +31,13 @@
     <!-- Clamp Control -->
     <!--===============-->
     <!-- The arduino running this code should be a MEGA and should be running "grasping/src/clamp_switch/clamp_switch.ino", see file for wiring -->
-    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="false">
+    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="true">
         <param name="port" value="$(arg port_clamp)" />
+        <param name="baud" value="19200"/>
     </node>
+   
     
+
     <!-- Clamp Controller -->
     <node pkg="grasping" name="clamp_control" type="clamp_control">
         <param name="clamp_scale" value="$(arg clamp_scale)"/>
@@ -47,6 +51,7 @@
     <node pkg="grasping" name="approach_controller" type="approach_controller" output="screen">
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
+        <param name="/roll/radius" value="$(arg roll_radius)"/>
         <param name="grasp_angle" value="$(arg grasp_angle)"/>
         <param name="angle_tolerance" value="$(arg angle_tolerance)"/>
         <param name="K_angle" value="$(arg K_angle)"/>
@@ -66,7 +71,7 @@
     <!--====================-->
     <!-- Cylinder Detection -->
     <!--====================-->
-    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" output="screen">
+    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" respawn="true" output="screen">
         <param name="debug" value="$(arg debug)"/>
         <param name="sensor_frame" value="$(arg sensor_frame)"/>
         <param name="point_cloud_topic" value="$(arg point_cloud_topic)"/>

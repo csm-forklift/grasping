@@ -216,6 +216,7 @@ public:
             pose.pose.position.x = m_path.at(i)[0];
             pose.pose.position.y = m_path.at(i)[1];
             pose.header.seq = path_seq++;
+            pose.header.frame_id = "odom";
             ros_path.poses.at(i) = pose;
         }
     }
