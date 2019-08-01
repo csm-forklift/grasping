@@ -147,7 +147,7 @@ void setup()
   analogWrite(OPEN_PIN_SIGNAL_1, PWM_MIDDLE_1);
   analogWrite(OPEN_PIN_SIGNAL_2, PWM_MIDDLE_2);
 
-  Serial.begin(57600);
+  Serial.begin(19200);
 }
 
 void loop() 
@@ -299,7 +299,7 @@ void loop()
   if (clamp_grasp <= 0) 
   {
     // Checking for the plate position
-    if (stretch_value > 16.0 && stretch_value < 22.0)
+    if (stretch_value > 17.0)
     {
       // Check limit switch
       if (switch_status_close == false)
