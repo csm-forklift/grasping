@@ -38,11 +38,23 @@ void clampmovementCallback(const std_msgs::Float32&);
 void clampgraspCallback(const std_msgs::Float32&);
 
 // Limit switch
+/* Digital Read Pins
 int limit_switch_up = 7;
 int limit_switch_down = 6;
 int limit_switch_open = 5;
 int limit_switch_close = 4;
+*/
+/* Analog Read Pins */
+// These pins are used because there is noise in the digital signal when all of the
+// arduinos are plugged in and the motors are turned on. Using the analogRead() method
+// allows for changing the threshold to a higher value for determining a HIGH or LOW
+// signal.
+int limit_switch_up = A3;
+int limit_switch_down = A4;
+int limit_switch_open = A5;
+int limit_switch_close = A6;
 int limit_switch_plate = A1;
+int analog_threshold = 700; // if analogRead is above, switch is OFF, if below switch is ON
 
 const int led = 13;
 bool switch_status_up;
@@ -50,12 +62,15 @@ bool switch_status_down;
 bool switch_status_open;
 bool switch_status_close;
 bool switch_status_plate;
+int16_t switch_status_up_analog;
+int16_t switch_status_down_analog;
+int16_t switch_status_open_analog;
+int16_t switch_status_close_analog;
 int16_t switch_status_plate_analog;
 
 // Force Sensitive Resistor
 int fsrPin = A0;
 int16_t fsrReading;
-
 
 // Stretch sensor
 //int stretch_sensor_1_pin = A1;
@@ -88,14 +103,12 @@ std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
 std_msgs::Bool switch_close_msg;
-//std_msgs::Bool switch_plate_msg;
-std_msgs::Int16 switch_plate_analog_msg;
+std_msgs::Bool switch_plate_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
-//ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
-ros::Publisher limit_switch_plate_analog_pub("switch_status_analog_plate", &switch_plate_analog_msg);
+ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -134,8 +147,7 @@ void setup()
   nh.advertise(limit_switch_close_pub);
 
   pinMode(limit_switch_plate, INPUT);
-//  nh.advertise(limit_switch_plate_pub);
-  nh.advertise(limit_switch_plate_analog_pub);
+  nh.advertise(limit_switch_plate_pub);
 
   // FSR
   nh.advertise(force_pub);
@@ -166,14 +178,10 @@ void loop()
   
   // Limit switch
   // Up
-  if (digitalRead(limit_switch_up) == LOW)
-  {
-    digitalWrite(led, HIGH);
+  if (analogRead(limit_switch_up) < analog_threshold) {
     switch_status_up = true;
   }
-  else
-  {
-    digitalWrite(led, LOW);
+  else {
     switch_status_up = false;
   }
   switch_up_msg.data = switch_status_up;
@@ -181,14 +189,10 @@ void loop()
   delay(10);
 
   // Down
-  if (digitalRead(limit_switch_down) == LOW)
-  {
-    digitalWrite(led, HIGH);
+  if (analogRead(limit_switch_down) < analog_threshold) {
     switch_status_down = true;
   }
-  else
-  {
-    digitalWrite(led, LOW);
+  else {
     switch_status_down = false;
   }
   switch_down_msg.data = switch_status_down;
@@ -196,48 +200,34 @@ void loop()
   delay(10);
 
   // Open
-  if (digitalRead(limit_switch_open) == LOW)
-  {
-    digitalWrite(led, HIGH);
+  if (analogRead(limit_switch_open) < analog_threshold) {
     switch_status_open = true;
   }
-  else
-  {
-    digitalWrite(led, LOW);
+  else {
     switch_status_open = false;
   }
   switch_open_msg.data = switch_status_open;
   limit_switch_open_pub.publish(&switch_open_msg);
 
   // Close
-  if (digitalRead(limit_switch_close) == LOW)
-  {
-    digitalWrite(led, HIGH);
+  if (analogRead(limit_switch_close) < analog_threshold) {
     switch_status_close = true;
   }
-  else
-  {
-    digitalWrite(led, LOW);
+  else {
     switch_status_close = false;
   }
   switch_close_msg.data = switch_status_close;
   limit_switch_close_pub.publish(&switch_close_msg);
 
-//  // Plate
-//  if (digitalRead(limit_switch_plate) == LOW)
-//  {
-//    switch_status_plate = true;
-//  }
-//  else
-//  {
-//    switch_status_plate = false;
-//  }
-//  switch_plate_msg.data = switch_status_plate;
-//  limit_switch_plate_pub.publish(&switch_plate_msg);
-
-  switch_status_plate_analog = analogRead(limit_switch_plate);
-  switch_plate_analog_msg.data = switch_status_plate_analog;
-  limit_switch_plate_analog_pub.publish(&switch_plate_analog_msg);
+  // Plate
+  if (analogRead(limit_switch_plate) < analog_threshold) {
+    switch_status_plate = true;
+  }
+  else {
+    switch_status_plate = false;
+  }
+  switch_plate_msg.data = switch_status_plate;
+  limit_switch_plate_pub.publish(&switch_plate_msg);
   
   // FSR
   fsrReading = analogRead(fsrPin);
@@ -246,7 +236,9 @@ void loop()
 
   // Stretch sensor
   float stretch_value;
-  
+
+  // Currently the wires for stretch sensor 1 are being used for the 
+  // plate switch (analog pin A1)
 //  int value_1;
 //  int v_1_in = 5;
 //  float v_1_out = 0;
