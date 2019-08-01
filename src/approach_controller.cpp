@@ -126,7 +126,7 @@ public:
 
         // Create publishers and subscribers
         control_mode_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
-        stretch_sensor_sub = nh_.subscribe("/clamp_control/stretch", 1, &ApproachController::stretchSensorCallback, this);
+        stretch_sensor_sub = nh_.subscribe("/clamp_control/clamp_plate_status", 1, &ApproachController::stretchSensorCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
@@ -223,7 +223,7 @@ public:
 
         // Give time for the steering angle to get to position
         // ros::Duration(1.0).sleep();
-        while (abs(current_steering_angle-steering_angle) > angle_tolerance) {
+        while (abs(current_steering_angle-steering_angle) > angle_tolerance && ros::ok()) {
             // Publish the new steering angle and velocity
             cout << "Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
 
@@ -284,6 +284,7 @@ public:
 
             if(linear_velocity > approach_tolerance){
                 if (cos(theta_error) < 0) {
+                    std::cout << "Need to go backwards!\n";
                     steering_angle = -steering_angle;
                     linear_velocity = linear_velocity*5*proportional_control_linear;
                 }
@@ -292,6 +293,7 @@ public:
                 }
             }
             else{
+                std::cout << "[" << ros::this_node::getName() << "]: approach tolerance reached.\n";
                 linear_velocity = 0;
             }
 

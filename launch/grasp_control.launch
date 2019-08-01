@@ -35,7 +35,9 @@
         <param name="port" value="$(arg port_clamp)" />
         <param name="baud" value="19200"/>
     </node>
+   
     
+
     <!-- Clamp Controller -->
     <node pkg="grasping" name="clamp_control" type="clamp_control">
         <param name="clamp_scale" value="$(arg clamp_scale)"/>
@@ -69,7 +71,7 @@
     <!--====================-->
     <!-- Cylinder Detection -->
     <!--====================-->
-    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" output="screen">
+    <node pkg="grasping" name="cylinder_detection" type="cylinder_detection" respawn="true" output="screen">
         <param name="debug" value="$(arg debug)"/>
         <param name="sensor_frame" value="$(arg sensor_frame)"/>
         <param name="point_cloud_topic" value="$(arg point_cloud_topic)"/>
