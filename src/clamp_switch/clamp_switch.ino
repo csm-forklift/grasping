@@ -50,6 +50,7 @@ bool switch_status_down;
 bool switch_status_open;
 bool switch_status_close;
 bool switch_status_plate;
+int16_t switch_status_plate_analog;
 
 // Force Sensitive Resistor
 int fsrPin = A0;
@@ -87,12 +88,14 @@ std_msgs::Bool switch_up_msg;
 std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
 std_msgs::Bool switch_close_msg;
-std_msgs::Bool switch_plate_msg;
+//std_msgs::Bool switch_plate_msg;
+std_msgs::Int16 switch_plate_analog_msg;
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
-ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
+//ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
+ros::Publisher limit_switch_plate_analog_pub("switch_status_analog_plate", &switch_plate_analog_msg);
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -131,6 +134,8 @@ void setup()
   nh.advertise(limit_switch_close_pub);
 
   pinMode(limit_switch_plate, INPUT);
+//  nh.advertise(limit_switch_plate_pub);
+  nh.advertise(limit_switch_plate_analog_pub);
 
   // FSR
   nh.advertise(force_pub);
@@ -218,17 +223,21 @@ void loop()
   switch_close_msg.data = switch_status_close;
   limit_switch_close_pub.publish(&switch_close_msg);
 
-  // Plate
-  if (digitalRead(limit_switch_plate) == LOW)
-  {
-    switch_status_plate = true;
-  }
-  else
-  {
-    switch_status_plate = false;
-  }
-  switch_plate_msg.data = switch_status_plate;
-  limit_switch_plate_pub.publish(&switch_plate_msg);
+//  // Plate
+//  if (digitalRead(limit_switch_plate) == LOW)
+//  {
+//    switch_status_plate = true;
+//  }
+//  else
+//  {
+//    switch_status_plate = false;
+//  }
+//  switch_plate_msg.data = switch_status_plate;
+//  limit_switch_plate_pub.publish(&switch_plate_msg);
+
+  switch_status_plate_analog = analogRead(limit_switch_plate);
+  switch_plate_analog_msg.data = switch_status_plate_analog;
+  limit_switch_plate_analog_pub.publish(&switch_plate_analog_msg);
   
   // FSR
   fsrReading = analogRead(fsrPin);
