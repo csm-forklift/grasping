@@ -166,6 +166,8 @@ public:
             sum += stretch_window.at(i);
         }
         stretch = sum/stretch_window.size();
+
+
 	}
 
 	void controlModeCallback(const std_msgs::Int8::ConstPtr& msg)
