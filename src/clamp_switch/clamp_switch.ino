@@ -54,7 +54,7 @@ int limit_switch_down = A4;
 int limit_switch_open = A5;
 int limit_switch_close = A6;
 int limit_switch_plate = A1;
-int analog_threshold = 700; // if analogRead is above, switch is OFF, if below switch is ON
+int analog_threshold = 950; // if analogRead is above, switch is OFF, if below switch is ON
 
 const int led = 13;
 bool switch_status_up;
@@ -71,7 +71,7 @@ int16_t switch_status_plate_analog;
 // Force Sensitive Resistor
 int fsrPin = A0;
 int16_t fsrReading;
-int force_threshold = 900;
+int force_threshold = 850;
 
 // Stretch sensor
 //int stretch_sensor_1_pin = A1;
@@ -105,11 +105,13 @@ std_msgs::Bool switch_down_msg;
 std_msgs::Bool switch_open_msg;
 std_msgs::Bool switch_close_msg;
 std_msgs::Bool switch_plate_msg;
+std_msgs::Int16 switch_analog_debug; // print out the analogRead value for debugging
 ros::Publisher limit_switch_up_pub("switch_status_up", &switch_up_msg);
 ros::Publisher limit_switch_down_pub("switch_status_down", &switch_down_msg);
 ros::Publisher limit_switch_open_pub("switch_status_open", &switch_open_msg);
 ros::Publisher limit_switch_close_pub("switch_status_close", &switch_close_msg);
 ros::Publisher limit_switch_plate_pub("switch_status_plate", &switch_plate_msg);
+ros::Publisher limit_switch_analog_pub("switch_status_analog", &switch_analog_debug);
 
 // FSR
 std_msgs::Int16 force_msg;
@@ -149,6 +151,9 @@ void setup()
 
   pinMode(limit_switch_plate, INPUT);
   nh.advertise(limit_switch_plate_pub);
+
+  // For debugging the analogRead values
+  nh.advertise(limit_switch_analog_pub);
 
   // FSR
   nh.advertise(force_pub);
@@ -231,6 +236,10 @@ void loop()
   }
   switch_plate_msg.data = switch_status_plate;
   limit_switch_plate_pub.publish(&switch_plate_msg);
+
+  // DEBUG: print analog value
+  switch_analog_debug.data = analogRead(limit_switch_close);
+  limit_switch_analog_pub.publish(&switch_analog_debug);
   
   // FSR
   fsrReading = analogRead(fsrPin);

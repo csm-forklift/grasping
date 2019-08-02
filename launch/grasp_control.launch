@@ -4,6 +4,7 @@
     <!-- Arguments and Parameters -->
     <!--==========================-->
     <arg name="debug" default="false"/>
+    <arg name="use_clamp_arduino" default="false"/>
     <arg name="port_clamp" default="/dev/ttyACM0"/>
     <arg name="roll_radius" default="0.29"/>
     <arg name="clamp_scale_movement" default="0.5"/>
@@ -26,13 +27,13 @@
     <arg name="timeout" default="1.0"/>
     <arg name="sensor_frame" default="/lidar1_link"/>
     <arg name="point_cloud_topic" default="os1_node1/points"/>
-    
-    
+
+
     <!--===============-->
     <!-- Clamp Control -->
     <!--===============-->
     <!-- The arduino running this code should be a MEGA and should be running "grasping/src/clamp_switch/clamp_switch.ino", see file for wiring -->
-    <node pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="false">
+    <node if="$(arg use_clamp_arduino)" pkg="rosserial_python" name="clamp_node_arduino" type="serial_node.py" respawn="false">
         <param name="port" value="$(arg port_clamp)" />
         <param name="baud" value="19200"/>
     </node>
@@ -44,7 +45,7 @@
         <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
         <remap from="/clamp_control/clamp_grasp" to="/clamp_switch_node/clamp_grasp"/>
     </node>
-    
+
     <!--==================-->
     <!-- Approach Control -->
     <!--==================-->
@@ -67,7 +68,7 @@
         <param name="timeout" value="$(arg timeout)"/>
         <remap from="/approach_controller/point" to="/cylinder_detection/point"/>
     </node>
-    
+
     <!--====================-->
     <!-- Cylinder Detection -->
     <!--====================-->
@@ -79,5 +80,5 @@
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
     </node>
-    
+
 </launch>
