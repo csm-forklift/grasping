@@ -22,6 +22,7 @@ private:
 	ros::Subscriber limit_switch_down_sub;
 	ros::Subscriber limit_switch_open_sub;
 	ros::Subscriber limit_switch_close_sub;
+    ros::Subscriber limit_switch_plate_sub;
 	ros::Subscriber force_sub;
 	ros::Subscriber stretch_sub;
     ros::Subscriber joystick_override_sub;
@@ -39,19 +40,23 @@ private:
 	bool limit_down;
 	bool limit_open;
 	bool limit_close;
+    bool limit_plate;
 	int force;
+    int force_threshold;
 	float stretch;
+    float stretch_threshold;
 	int control_mode;
     std::vector<int> available_control_modes; // vector of possible values for turing on this controller
 
-    double clamp_scale; // adjusts value sent to the arduino controlling the clamp, range: [0, 1]
-	float clamp_grasp;
+    double clamp_scale_movement; // adjusts value sent to the arduino controlling the clamp, range: [0, 1]
+	double clamp_scale_grasp;
+    float clamp_grasp;
 	float clamp_movement;
 	bool clamp_plate_status;
 	bool grasp_status;
 	int operation_mode;
 
-    int window_size = 10;
+    int window_size = 5;
     std::vector<float> stretch_window;
 
     // Joystick Controller Variables
@@ -63,12 +68,14 @@ public:
 	ClampControl() : nh(""), nh_("~")
 	{
         // Set parameters
-        nh_.param<double>("clamp_scale", clamp_scale, 0.5);
+        nh_.param<double>("clamp_scale_movement", clamp_scale_movement, 0.5);
+        nh_.param<double>("clamp_scale_grasp", clamp_scale_grasp, 0.5);
         nh_.param("manual_deadman", manual_deadman_button, 4);
         nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
         nh_.param("timeout", timeout, 1.0);
 
-        std::cout << "Clamp scale: " << clamp_scale << '\n';
+        std::cout << "Clamp scale movement: " << clamp_scale_movement << '\n';
+        std::cout << "Clamp scale grasp: " << clamp_scale_grasp << '\n';
 
         clamp_movement_pub = nh_.advertise<std_msgs::Float32>("clamp_movement", 1);
         clamp_grasp_pub = nh_.advertise<std_msgs::Float32>("clamp_grasp", 1);
@@ -83,6 +90,7 @@ public:
 		limit_switch_down_sub = nh.subscribe<std_msgs::Bool> ("switch_status_down", 1, &ClampControl::limit_down_Callback, this);
 		limit_switch_open_sub = nh.subscribe<std_msgs::Bool> ("switch_status_open", 1, &ClampControl::limit_open_Callback, this);
 		limit_switch_close_sub = nh.subscribe<std_msgs::Bool> ("switch_status_close", 1, &ClampControl::limit_close_Callback, this);
+        limit_switch_plate_sub = nh.subscribe<std_msgs::Bool> ("switch_status_plate", 1, &ClampControl::limit_plate_Callback, this);
 		force_sub = nh.subscribe<std_msgs::Int16> ("force", 1, &ClampControl::force_Callback, this);
 		stretch_sub = nh.subscribe<std_msgs::Float32> ("stretch_length", 1, &ClampControl::stretch_Callback, this);
         joystick_override_sub = nh_.subscribe("/joy", 1, &ClampControl::joystickCallback, this);
@@ -92,7 +100,9 @@ public:
         // Initialize States
 		operation_mode = 0; // starting with raising clamp
         force = 0;
+        force_threshold = 800;
         stretch = 0;
+        stretch_threshold = 17.0;
 
         //===== Print out possible values for control mode =====//
         // Pushback more numbers to allow this controller to operate in more
@@ -124,7 +134,7 @@ public:
 	void lower_clamp();
 	void raise_clamp();
 	void close_clamp();
-	void stretch_check();
+	void plate_check();
 	void check_grasp();
 
 	void limit_up_Callback(const std_msgs::Bool::ConstPtr& msg)
@@ -145,6 +155,11 @@ public:
 	void limit_close_Callback(const std_msgs::Bool::ConstPtr& msg)
     {
         limit_close = msg -> data;
+    }
+
+    void limit_plate_Callback(const std_msgs::Bool::ConstPtr& msg)
+    {
+        limit_plate = msg -> data;
     }
 
 	void force_Callback(const std_msgs::Int16::ConstPtr& msg)
@@ -203,7 +218,7 @@ public:
         clamp_grasp_msg.data = 0.0;
 
         // DEBUG:
-        std::cout << "[clamp_contro]: publishing clamp movement stop command\n";
+        std::cout << "[clamp_control]: publishing clamp movement stop command\n";
 
         clamp_movement_pub.publish(clamp_movement_msg);
     	clamp_grasp_pub.publish(clamp_grasp_msg);
@@ -223,7 +238,7 @@ void ClampControl::lower_clamp()
 {
 	if (limit_down == false)
 	{
-		clamp_movement = 1*clamp_scale;
+		clamp_movement = 1*clamp_scale_movement;
 	}
 	else
 	{
@@ -236,7 +251,7 @@ void ClampControl::open_clamp()
 {
 	if (limit_open == false)
 	{
-		clamp_grasp = 1*clamp_scale;
+		clamp_grasp = 1*clamp_scale_grasp;
 	}
 	else
 	{
@@ -245,9 +260,9 @@ void ClampControl::open_clamp()
 	}
 }
 
-void ClampControl::stretch_check()
+void ClampControl::plate_check()
 {
-	if (stretch > 18.0)
+	if (stretch > stretch_threshold || limit_plate == true)
 	{
 		clamp_plate_status = true;
 	}
@@ -259,9 +274,9 @@ void ClampControl::stretch_check()
 
 void ClampControl::close_clamp()
 {
-	if (limit_close == false)
+	if (limit_close == false && force < force_threshold)
 	{
-		clamp_grasp = -1*clamp_scale;
+		clamp_grasp = -1*clamp_scale_grasp;
 	}
 	else
 	{
@@ -271,11 +286,12 @@ void ClampControl::close_clamp()
 
 void ClampControl::check_grasp()
 {
-	if ((clamp_plate_status == true) && (force > 900))
+	if ((clamp_plate_status == true) && (force >= force_threshold))
 	{
 		grasp_status = true;
         std_msgs::Bool grasp_status_msg;
         grasp_status_msg.data = grasp_status;
+        grasp_status_pub.publish(grasp_status_msg);
 		operation_mode = 4;
 	}
     else if ((clamp_plate_status == true) && (limit_close == true))
@@ -283,23 +299,24 @@ void ClampControl::check_grasp()
         grasp_status = true;
         std_msgs::Bool grasp_status_msg;
         grasp_status_msg.data = grasp_status;
+        grasp_status_pub.publish(grasp_status_msg);
         operation_mode = 4;
     }
-	else if (clamp_plate_status == false)
+	else if ((clamp_plate_status == false) && (limit_close == true) && (force < force_threshold))
 	{
         std::cout << "Clamp broken: " << clamp_plate_status << "\n";
 		grasp_status = false;
         std_msgs::Bool grasp_status_msg;
         grasp_status_msg.data = grasp_status;
+        grasp_status_pub.publish(grasp_status_msg);
 		operation_mode = 1;
 	}
 }
 
-void ClampControl::raise_clamp()
-{
+void ClampControl::raise_clamp() {
 	if (limit_up == false)
 	{
-		clamp_movement = -1*clamp_scale;
+		clamp_movement = -1*clamp_scale_movement;
 	}
 	else
 	{
@@ -349,9 +366,9 @@ void ClampControl::controller()
     	}
     	if (operation_mode == 2)
     	{
-            std::cout << "Stretch checking\n";
-    		stretch_check();
-            std::cout << "Stretch: " << clamp_plate_status << "\n";
+            std::cout << "Stretch/plate switch checking\n";
+    		plate_check();
+            std::cout << "plate: " << clamp_plate_status << "\n";
             if (clamp_plate_status)
             {
                 operation_mode = 3;
@@ -360,10 +377,10 @@ void ClampControl::controller()
     	if (operation_mode == 3)
     	{
             std::cout << "Closing and grasping\n";
-            stretch_check();
-            std::cout << "Stretch: " << clamp_plate_status << "\n";
-    		close_clamp();
+            plate_check();
+            std::cout << "plate: " << clamp_plate_status << ", force: " << force << "\n";
     		check_grasp();
+            close_clamp();
     	}
     	if (operation_mode == 4)
     	{
@@ -406,7 +423,7 @@ void ClampControl::controller()
 
         // Stretch sensor status can be sent everytime
         // update plate status
-        stretch_check();
+        plate_check();
         clamp_plate_status_msg.data = clamp_plate_status;
         clamp_plate_status_pub.publish(clamp_plate_status_msg);
     }

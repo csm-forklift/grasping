@@ -24,6 +24,7 @@ private:
     ros::NodeHandle nh_;
     ros::Subscriber control_mode_sub; // reads the current controller mode
     ros::Subscriber stretch_sensor_sub; // reads boolean indicating whether the stretch sensor is over the threshold or not
+    ros::Subscriber switch_plate_sub; // gets click status of limit switch on grasping plate
     ros::Subscriber odom_sub; // read the forklifts current pose from the odom message
     ros::Subscriber roll_sub; // read paper roll's current pose
     ros::Subscriber grasp_success_sub; // reads whether the grasp was sucessful or not
@@ -65,7 +66,7 @@ private:
     double forklift_heading;
 
     // Stetch sensor input
-    bool stretch_on;
+    bool plate_contact;
 
     // Velocity bounds
     double max_velocity;
@@ -126,10 +127,10 @@ public:
 
         // Create publishers and subscribers
         control_mode_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
-        stretch_sensor_sub = nh_.subscribe("/clamp_control/clamp_plate_status", 1, &ApproachController::stretchSensorCallback, this);
+        stretch_sensor_sub = nh_.subscribe("/clamp_control/clamp_plate_status", 1, &ApproachController::plateCheckCallback, this);
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
-        grasp_success_sub = nh_.subscribe("/grasp_successful", 1, &ApproachController::graspSuccessfulCallback, this);
+        grasp_success_sub = nh_.subscribe("/clamp_control/grasp_status", 1, &ApproachController::graspSuccessfulCallback, this);
         steering_angle_sub = nh_.subscribe("/steering_node/filtered_angle", 1, &ApproachController::steeringAngleCallback, this);
         joystick_override_sub = nh_.subscribe("/joy", 1, &ApproachController::joy_override, this);
 
@@ -144,7 +145,7 @@ public:
         forklift_x = 0;
         forklift_y = 0;
         forklift_heading = 0;
-        stretch_on = false;
+        plate_contact = false;
 
         //===== Initialize Controller Variables =====//
         theta_desired = 0;
@@ -243,10 +244,10 @@ public:
     void approach()
     {
         // Control sequence for approaching the roll
-        while (stretch_on == false && ros::ok()) {
+        while (plate_contact == false && ros::ok()) {
             // Get pose of base_link on the forklift
             getForkliftPose();
-            
+
             // Calculate forklift's new target position in the odom frame
             tf::TransformListener listener;
             tf::StampedTransform transform;
@@ -282,19 +283,49 @@ public:
 
             linear_velocity = approach_distance*cos(theta_error);
 
+            // 'linear_velocity' is used because it relates to the along track error through the 'cos(theta_error)' term, we don't want the direct aproach_distance because we need this comparison to be allowed to have a negative value to know when the roll as been passed
             if(linear_velocity > approach_tolerance){
                 if (cos(theta_error) < 0) {
                     std::cout << "Need to go backwards!\n";
+                    // Change gear to reverse
+
                     steering_angle = -steering_angle;
                     linear_velocity = linear_velocity*5*proportional_control_linear;
+
+                    // Set forklift velocity
+                    // Bound movement velocity
+                    movement_velocity = max(linear_velocity, -max_velocity);
+
+                    // Velocity setpoint is negative, change gear to reverse
+                    gear = -1;
                 }
                 else {
                     linear_velocity = linear_velocity*proportional_control_linear;
+
+                    // Set forklift velocity
+                    // Bound movement velocity
+                    movement_velocity = min(linear_velocity, max_velocity);
+                    gear = 1;
                 }
             }
             else{
                 std::cout << "[" << ros::this_node::getName() << "]: approach tolerance reached.\n";
                 linear_velocity = 0;
+
+                // Wait 2 seconds for the stretch sensor to register
+                ros::Duration(2.0).sleep();
+
+                ros::spinOnce();
+
+                // if (plate_contact == false) {
+                //     // If the approach tolerance is reached and the stretch sensor has not been triggered, begin backup procedure
+                //     operation_mode = 2;
+                // }
+
+                // Set forklift velocity
+                // Bound movement velocity
+                movement_velocity = min(linear_velocity, max_velocity);
+                gear = 0;
             }
 
 /*
@@ -316,16 +347,11 @@ public:
             steering_angle = min(steering_angle, steering_angle_max);
             steering_angle = max(steering_angle, steering_angle_min);
 
-            // Set forklift velocity
-            // Bound movement velocity
-            movement_velocity = min(linear_velocity, max_velocity);
-            gear = 1;
-
             // Publish new steering angle and velocity
             publishMessages();
 
             // DEBUG:
-            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, stretch: %d, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, stretch_on, movement_velocity);
+            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, plate: %d, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, plate_contact, movement_velocity);
 
             // Update states
             ros::spinOnce();
@@ -342,6 +368,7 @@ public:
 
         // Stop velocity
         movement_velocity = 0;
+        gear = 0;
         //velocity_msg.data = movement_velocity;
         //velocity_pub.publish(velocity_msg);
 
@@ -360,7 +387,7 @@ public:
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
 
             // Set backup velocity
-            movement_velocity = -max_velocity/5;
+            movement_velocity = -max_velocity;
             gear = -1;
 
             // Set backup steering angle to 0
@@ -380,12 +407,15 @@ public:
         operation_mode = 1;
     }
 
-    void stretchSensorCallback(const std_msgs::Bool &msg)
+    void plateCheckCallback(const std_msgs::Bool &msg)
     {
         // Update stretch sensor state
-        stretch_on = msg.data;
+        plate_contact = msg.data;
+
+        // // DEBUG:
+        // std::cout << "[" << ros::this_node::getName() << "]: new plate sensor reading: " << plate_contact << "\n";
     }
-    
+
     void getForkliftPose(void)
     {
         // Update previous position
@@ -534,6 +564,7 @@ public:
             gear_pub.publish(gear_msg);
 
             // Send desired velocity through publisher
+            //std::cout << "[" << ros::this_node::getName() << "]: publishing velocity: " << movement_velocity << "\n";
             velocity_msg.data = movement_velocity;
             velocity_pub.publish(velocity_msg);
         }

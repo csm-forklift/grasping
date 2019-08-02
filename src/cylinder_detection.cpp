@@ -310,6 +310,11 @@ public:
 
             rosMsgToPCL(msg, scene_cloud_unfiltered);
 
+            // Make sure the pointcloud has points
+            if (scene_cloud_unfiltered->size() == 0) {
+                return;
+            }
+
             //===== Preprocessing (filter, segment, etc.) =====//
             // Try to remove the ground layer (find the minimum z level and remove a few centimeters up)
             pcl::PassThrough<PointT> pass; // passthrough filter
@@ -318,6 +323,11 @@ public:
             pass.setFilterLimits(filter_z_low, filter_z_high);
 
             pass.filter(*scene_cloud_z_filter_frame);
+
+            // Make sure the pointcloud has points
+            if (scene_cloud_z_filter_frame->size() == 0) {
+                return;
+            }
 
             pcl::transformPointCloud(*scene_cloud_z_filter_frame, *scene_cloud_right_adjustment_frame, translation, min_angle_rotation);
 
@@ -328,6 +338,10 @@ public:
 
             pass.filter(*scene_cloud_right_adjustment_frame);
 
+            // Make sure the pointcloud has points
+            if (scene_cloud_right_adjustment_frame->size() == 0) {
+                return;
+            }
 
             pcl::transformPointCloud(*scene_cloud_right_adjustment_frame, *scene_cloud_left_adjustment_frame, translation, delta_angle_rotation);
 
@@ -338,6 +352,11 @@ public:
 
             pass.filter(*scene_cloud_left_adjustment_frame);
 
+            // Make sure the pointcloud has points
+            if (scene_cloud_left_adjustment_frame->size() == 0) {
+                return;
+            }
+
             pcl::transformPointCloud(*scene_cloud_left_adjustment_frame, *scene_cloud, translation, max_angle_rotation);
 
             // Unnecessary filter required to apply transform????
@@ -347,6 +366,10 @@ public:
 
             pass.filter(*scene_cloud);
 
+            // If final pointcloud contains no points, exit the callback
+            if (scene_cloud->size() == 0) {
+                return;
+            }
 
             // Get the bounds of the point cloud
             pcl::getMinMax3D(*scene_cloud, min_pt, max_pt);
@@ -365,10 +388,6 @@ public:
             // std::cout << std::endl;
             //=================================================//
 
-
-
-
-
             // TODO: filter point cloud based on angle
             /* Process
              * Rotate so that cutoff angle is parallel to the Y axis.
@@ -384,17 +403,17 @@ public:
                 pclToROSMsg(scene_cloud, pc_msg);
                 pc_debug_pub.publish(pc_msg);
             }
-
-            // If final pointcloud contains no points, exit the callback
-            if (scene_cloud->size() == 0) {
-                return;
-            }
             //=================================================//
 
             //===== Generate 2D Image =====//
             // Determine the grid size based on the desired resolution
             x_range = x_max - x_min;
             y_range = y_max - y_min;
+
+            if (x_range == 0 && y_range == 0) {
+                // Only the center point was received
+                return;
+            }
 
             if (!std::isfinite(x_range)) {
                 x_range = 0;
