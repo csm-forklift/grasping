@@ -71,6 +71,7 @@ int16_t switch_status_plate_analog;
 // Force Sensitive Resistor
 int fsrPin = A0;
 int16_t fsrReading;
+int force_threshold = 900;
 
 // Stretch sensor
 //int stretch_sensor_1_pin = A1;
@@ -175,7 +176,9 @@ void setup()
 
 void loop() 
 {
-  
+  //=============//
+  // Read Sensors
+  //=============//
   // Limit switch
   // Up
   if (analogRead(limit_switch_up) < analog_threshold) {
@@ -276,10 +279,12 @@ void loop()
   
   stretch_msg.data = stretch_value;
   stretch_sensor_pub.publish( &stretch_msg );
-  
-  // Clamp switch control
 
+  //=====================//
+  // Clamp switch control
+  //=====================//
   // Clamp movement up and down
+  // negative command = upward movement
   if (clamp_movement <= 0)
   {
   // Check for the limit switch
@@ -319,18 +324,14 @@ void loop()
   
   if (clamp_grasp <= 0) 
   {
-    // Checking for the plate position
-    if (stretch_value > 17.0)
+    // Checking for the force sensor and close switch 
+    if (switch_status_close == false && fsrReading < force_threshold)
     {
-      // Check limit switch
-      if (switch_status_close == false)
-      {
-        int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
-        int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
-  
-        analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
-        analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
-      }
+      int pwm_signal_grasp_1 = map(100*clamp_grasp, -100, 100, PWM_MIN_1, PWM_MAX_1);
+      int pwm_signal_grasp_2 = map(100*clamp_grasp, -100, 100, PWM_MAX_2, PWM_MIN_2);
+
+      analogWrite(OPEN_PIN_SIGNAL_1, pwm_signal_grasp_1);
+      analogWrite(OPEN_PIN_SIGNAL_2, pwm_signal_grasp_2);
     }
     else
     {
