@@ -551,9 +551,15 @@ public:
             //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
             //cout << '\n';
 
-            //====================================================================//
+            // If there are no potentials remaining, break out of the function
+            if (potentials.size() == 0) {
+                return;
+            }
+
+
+            //================================================================//
             // Mahalanobis Distance Filter with Bayesian Estimator
-            //====================================================================//
+            //================================================================//
             float sensor_frame_x;
             float sensor_frame_y;
             double target_frame_x;

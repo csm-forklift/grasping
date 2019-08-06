@@ -762,7 +762,7 @@ class ManeuverPath:
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
-            use_ipopt = True
+            use_ipopt = False
             if (use_ipopt):
                 # Initial value for optimization
                 x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
@@ -860,7 +860,7 @@ class ManeuverPath:
             #=================================================================#
             # Use hardcoded value
             #=================================================================#
-            use_hardcoded = False
+            use_hardcoded = True
             if (use_hardcoded):
                 x_s = x0[0]
                 y_s = x0[1]

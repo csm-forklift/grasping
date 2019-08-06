@@ -28,6 +28,7 @@ private:
     ros::Subscriber odom_sub; // read the forklifts current pose from the odom message
     ros::Subscriber roll_sub; // read paper roll's current pose
     ros::Subscriber grasp_success_sub; // reads whether the grasp was sucessful or not
+    ros::Subscriber grasp_finished_sub; // reads whether the entire grasp procedure is finished
     ros::Subscriber steering_angle_sub;
     ros::Subscriber joystick_override_sub;
     ros::Publisher velocity_pub; // publish linear velocity command
@@ -131,6 +132,7 @@ public:
         odom_sub = nh_.subscribe("/odom", 1, &ApproachController::odomCallback, this);
         roll_sub = nh_.subscribe("point", 1, &ApproachController::rollCallback, this);
         grasp_success_sub = nh_.subscribe("/clamp_control/grasp_status", 1, &ApproachController::graspSuccessfulCallback, this);
+        grasp_finished_sub = nh_.subscribe("/clamp_control/grasp_finished", 1, &ApproachController::graspFinishedCallback, this);
         steering_angle_sub = nh_.subscribe("/steering_node/filtered_angle", 1, &ApproachController::steeringAngleCallback, this);
         joystick_override_sub = nh_.subscribe("/joy", 1, &ApproachController::joy_override, this);
 
@@ -226,7 +228,7 @@ public:
         // ros::Duration(1.0).sleep();
         while (abs(current_steering_angle-steering_angle) > angle_tolerance && ros::ok()) {
             // Publish the new steering angle and velocity
-            cout << "Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
+            cout << "Initial angle - Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
 
             publishMessages();
             ros::spinOnce();
@@ -380,9 +382,24 @@ public:
     {
         // Control sequence for backing out after a failed grasp
         // Until desired distance is achieved between the forklift and the roll, send the backout velocity command
-        // DEBUG:
 
-        while (approach_distance < backout_distance) {
+        // First wait for the system to reach a steering angle of 0
+        steering_angle = 0;
+        movement_velocity = 0;
+        while (abs(current_steering_angle-steering_angle) > angle_tolerance && ros::ok()) {
+            // Publish the new steering angle and velocity
+            cout << "Backout - Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
+
+            publishMessages();
+            ros::spinOnce();
+            rate.sleep();
+
+            if (!checkControlMode(control_mode, available_control_modes)) {
+                break;
+            }
+        }
+
+        while (approach_distance < backout_distance && ros::ok()) {
             // Update approach distance
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
 
@@ -483,6 +500,8 @@ public:
 
     void rollCallback(const geometry_msgs::PointStamped &msg)
     {
+        // TODO: check the distance between the currently read point and the forklift pose, if it is less than 1m (roughly the lidar window rejection length) then do not update the roll position in odom frame and just keep using the most recent point before that
+
         // Update paper roll from cylinder detection
         roll_seen = true;
         paperRoll_x = msg.point.x;
@@ -491,13 +510,19 @@ public:
 
     void graspSuccessfulCallback(const std_msgs::Bool &msg)
     {
-        // If the grasp is successful we can go back to state 0 to prepare for the next round
+        // If the grasp is unsuccessful, we need to back out and retry
+        if (msg.data == false) {
+            operation_mode = 2;
+        }
+
+        // If the grasp was sucessful, keep in mode 1 until the grasp is finished
+    }
+
+    void graspFinishedCallback(const std_msgs::Bool &msg)
+    {
+        // If the grasp is finished, return to state 0
         if (msg.data == true) {
             operation_mode = 0;
-        }
-        // If the grasp is unsuccessful, we need to back out and retry
-        else {
-            operation_mode = 2;
         }
     }
 
