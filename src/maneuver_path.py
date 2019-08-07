@@ -89,6 +89,7 @@ class ManeuverPath:
         self.roll_radius = rospy.get_param("/roll/radius", 0.20)
         self.resolution = rospy.get_param("~maneuver_resolution", 0.10) # resolution for determining number of waypoints in the maneuver paths
         self.rescale_factor = rospy.get_param("~rescale_factor", 0.5) # Decreases the resolution of the image along each axis by this fraction
+        self.max_angle = rospy.get_param("/forklift/steering/max_angle", 65*(np.pi/180.)) # deg
 
         self.target_x = None
         self.target_y = None
@@ -138,8 +139,7 @@ class ManeuverPath:
 
         # Max turning radius
         self.axle_distance = 1.7249
-        self.max_angle = 70 # deg
-        self.min_radius = self.axle_distance/np.tan(self.max_angle*(np.pi/180.0))
+        self.min_radius = 1.5*self.axle_distance/np.tan(self.max_angle) # add a scaling factor to give more space to make the turn
 
         # ROS Publishers and Subscribers
         self.path1_pub = rospy.Publisher("~path1", Path, queue_size=3, latch=True)
@@ -673,6 +673,8 @@ class ManeuverPath:
             # Initial value for optimization
             #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
             x0 = [-11.5, 6.8, 2.2, -0.4, -1.6, 1.0, 1.4]
+            lower_bounds = [-20, -16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10]
+            upper_bounds = [2, 5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
@@ -723,13 +725,13 @@ class ManeuverPath:
                 ineq_con = {'type': 'ineq',
                             'fun' : lambda x: self.maneuverIneqConstraints(x, params),
                             'jac' : self.jac_maneuverIneqConstraints}
-                bounds = [(-20, 2),
-                          (-16, 5),
-                          (-np.pi, np.pi),
-                          (-5*np.pi, 5*np.pi),
-                          (-np.pi, np.pi),
-                          (self.min_radius, 5*np.pi),
-                          (np.pi/10, np.pi)]
+                bounds = [(lower_bounds[0], upper_bounds[0]),
+                          (lower_bounds[1], upper_bounds[1]),
+                          (lower_bounds[2], upper_bounds[2]),
+                          (lower_bounds[3], upper_bounds[3]),
+                          (lower_bounds[4], upper_bounds[4]),
+                          (lower_bounds[5], upper_bounds[5]),
+                          (lower_bounds[6], upper_bounds[6])]
 
                 # Optimize
                 tic = time.time()
@@ -768,8 +770,8 @@ class ManeuverPath:
                 x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
 
                 nvar = 7
-                x_L = np.array([-20, -16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10], dtype=np.float_)
-                x_U = np.array([2, 5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi], dtype=np.float_)
+                x_L = np.array(lower_bounds, dtype=np.float_)
+                x_U = np.array(upper_bounds, dtype=np.float_)
 
                 ncon = 2
                 g_L = np.array([0, 0], dtype=np.float_)
