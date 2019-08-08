@@ -672,9 +672,9 @@ class ManeuverPath:
 
             # Initial value for optimization
             #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
-            x0 = [-11.5, 6.8, 2.2, -0.4, -1.6, 1.0, 1.4]
-            lower_bounds = [-20, -16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10]
-            upper_bounds = [2, 5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi]
+            x0 = [11.5, -6.8, 0.2, -1, -1.6, 1.0, 1.4]
+            lower_bounds = [20, 16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10]
+            upper_bounds = [-2, -5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
