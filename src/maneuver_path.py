@@ -91,6 +91,15 @@ class ManeuverPath:
         self.rescale_factor = rospy.get_param("~rescale_factor", 0.5) # Decreases the resolution of the image along each axis by this fraction
         self.max_angle = rospy.get_param("/forklift/steering/max_angle", 65*(np.pi/180.)) # deg
 
+        # Optimization Parameters
+        self.start_x_s = rospy.get_param("~start_x_s", -11.5)
+        self.start_y_s = rospy.get_param("~start_y_s", 6.8)
+        self.start_theta_s = rospy.get_param("~start_theta_s", 2.2)
+        self.start_r_1 = rospy.get_param("~start_r_1", -0.4)
+        self.start_alpha_1 = rospy.get_param("~start_alpha_1", -1.6)
+        self.start_r_2 = rospy.get_param("~start_r_2", 1.0)
+        self.start_alpha_2 = rospy.get_param("~start_alpha_2", 1.4)
+
         self.target_x = None
         self.target_y = None
         self.target_approach_angle = None
@@ -672,7 +681,7 @@ class ManeuverPath:
 
             # Initial value for optimization
             #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
-            x0 = [-11.5, 6.8, 2.2, -0.4, -1.6, 1.0, 1.4]
+            x0 = [self.start_x_s, self.start_y_s, self.start_theta_s, self.start_r_1, self.start_alpha_1, self.start_r_2, self.start_alpha_2]
             lower_bounds = [-20, -16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10]
             upper_bounds = [2, 5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi]
 
