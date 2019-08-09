@@ -349,6 +349,9 @@ public:
             steering_angle = min(steering_angle, steering_angle_max);
             steering_angle = max(steering_angle, steering_angle_min);
 
+            // Decrease velocity with steering angle
+            movement_velocity = cos(steering_angle)*movement_velocity;
+
             // Publish new steering angle and velocity
             publishMessages();
 
