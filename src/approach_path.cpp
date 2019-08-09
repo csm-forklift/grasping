@@ -86,7 +86,7 @@ public:
         debug_control_points = true;
         if (debug_control_points) {
             // Create publisher
-            pub_control_points = nh_.advertise<visualization_msgs::Marker>("control_points", 1);
+            pub_control_points = nh_.advertise<visualization_msgs::Marker>("control_points", 1, true);
 
             // Initialize Marker message
             ros_control_points.header.frame_id = "odom";
@@ -280,13 +280,46 @@ public:
         m.getRPY(roll, pitch, yaw);
 
         // Calculate the control points for the desired path
+        // Calculate distance to roll for determining which waypoints to use
+        double roll_distance = sqrt(pow(x_f - x_r, 2) + pow(y_f - y_r, 2));
         m_control_points.clear();
-        m_control_points.push_back(Vector2d(x_f, y_f));
-        m_control_points.push_back(Vector2d(base_to_clamp*cos(yaw) + x_f, base_to_clamp*sin(yaw) + y_f));
-        m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
-        m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+
+        if (roll_distance < (base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+
+            // Make polynomial order 1 (a line)
+            m_p = 1;
+        }
+        else if (roll_distance < (2*base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+
+            // Make polynomial order 2 (quadratic)
+            m_p = 2;
+        }
+        else if (roll_distance < (total_length + base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
+        else if (roll_distance < (total_length + 2*base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
+        else {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d(base_to_clamp*cos(yaw) + x_f, base_to_clamp*sin(yaw) + y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
 
         updateControlPoints();
         publishControlPoints();
@@ -309,10 +342,12 @@ public:
          * 'm_control_points' as 'Vector2d' values. These points are converted
          * into a set of markers for a ROS message to visualize in RVIZ.
          */
-        ros_control_points.points.resize(m_control_points.size());
-        for (int i = 0; i < m_control_points.size(); i++) {
-            ros_control_points.points.at(i).x = m_control_points.at(i)[0];
-            ros_control_points.points.at(i).y = m_control_points.at(i)[1];
+        if (debug_control_points) {
+            ros_control_points.points.resize(m_control_points.size());
+            for (int i = 0; i < m_control_points.size(); i++) {
+                ros_control_points.points.at(i).x = m_control_points.at(i)[0];
+                ros_control_points.points.at(i).y = m_control_points.at(i)[1];
+            }
         }
     }
 

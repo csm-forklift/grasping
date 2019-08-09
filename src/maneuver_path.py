@@ -16,7 +16,7 @@ from nav_msgs.msg import Path, OccupancyGrid, Odometry
 from std_msgs.msg import Bool
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 import tf
-#import numpy as np
+#import numpy as np # currently using autograd
 import autograd.numpy as np
 from autograd import grad, jacobian, hessian
 import pyipopt
@@ -94,7 +94,7 @@ class ManeuverPath:
         # Optimization Parameters
         self.start_x_s = rospy.get_param("~start_x_s", 11.5)
         self.start_y_s = rospy.get_param("~start_y_s", -6.8)
-        self.start_theta_s = rospy.get_param("~start_theta_s", 2.2)
+        self.start_theta_s = rospy.get_param("~start_theta_s", 0.2)
         self.start_r_1 = rospy.get_param("~start_r_1", -0.4)
         self.start_alpha_1 = rospy.get_param("~start_alpha_1", -1.6)
         self.start_r_2 = rospy.get_param("~start_r_2", 1.0)
