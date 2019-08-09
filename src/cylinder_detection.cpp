@@ -270,8 +270,8 @@ public:
         // Get fixed rotations and translations for the point cloud trasnforms
 
         // Degrees are first variable of thetas. modify for desired angles of view off of center line
-        theta_min = 45.0 * (M_PI/180.0); // convert degrees to radians
-        theta_max = 45.0 * (M_PI/180.0); // convert degrees to radians
+        theta_min = 41.0 * (M_PI/180.0); // convert degrees to radians
+        theta_max = 36.0 * (M_PI/180.0); // convert degrees to radians
         phi_min = (M_PI/2) - theta_min;
         phi_max = (M_PI/2) - theta_max;
 
