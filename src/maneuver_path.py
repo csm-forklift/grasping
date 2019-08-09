@@ -910,6 +910,7 @@ class ManeuverPath:
             path1 = self.maneuverSegmentPath(self.pose_s, r_1, alpha_1)
             for i in range(len(path1)):
                 point = PoseStamped()
+                point.header.frame_id = "odom"
                 point.pose.position.x = path1[i][0]
                 point.pose.position.y = path1[i][1]
                 path1_msg.poses.append(point)
@@ -923,6 +924,7 @@ class ManeuverPath:
             path2 = self.maneuverSegmentPath(self.pose_m, r_2, alpha_2)
             for i in range(len(path2)):
                 point = PoseStamped()
+                point.header.frame_id = "odom"
                 point.pose.position.x = path2[i][0]
                 point.pose.position.y = path2[i][1]
                 path2_msg.poses.append(point)
