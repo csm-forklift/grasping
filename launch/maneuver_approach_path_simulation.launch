@@ -39,7 +39,7 @@
     <!--=========================-->
     <!-- Maneuver Path Generator -->
     <!--=========================-->
-    <node pkg="grasping" type="maneuver_path.py" name="maneuver_path" output="screen">
+    <node pkg="grasping" type="maneuver_path2.py" name="maneuver_path" output="screen">
         <remap from="/maneuver_path/path1" to="/maneuver_path1"/>
         <remap from="/maneuver_path/path2" to="/maneuver_path2"/>
     </node>

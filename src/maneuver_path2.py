@@ -25,6 +25,7 @@ from scipy.optimize import minimize
 import math
 from inPolygon import pointInPolygon
 import time
+from copy import copy, deepcopy
 
 
 class Pose2D:
@@ -92,6 +93,8 @@ class ManeuverPath:
         self.max_angle = rospy.get_param("/forklift/steering/max_angle", 65*(np.pi/180.)) # deg
 
         # Optimization Parameters
+        print("Namespace: %s" % rospy.get_name())
+        self.optimization_method = rospy.get_param("~optimization_method", 0) # 0 = use hardcoded, 1 = use scipy, 2 = use pyipopt
         self.start_x_s = rospy.get_param("~start_x_s", 11.5)
         self.start_y_s = rospy.get_param("~start_y_s", -6.8)
         self.start_theta_s = rospy.get_param("~start_theta_s", 0.2)
@@ -488,7 +491,7 @@ class ManeuverPath:
         cross_track_error = (np.sin(alpha)*B)**2
 
         # Calculate the weighted cost
-        J = weights[0]*radius_error + weights[1]*cross_track_error
+        J = params["weights"][0]*radius_error + params["weights"][1]*cross_track_error
 
         return J
 
@@ -551,7 +554,7 @@ class ManeuverPath:
             dx = x
             dx[i] = dx[i] + delta
             dC = (self.maneuverIneqConstraints(dx, params) - self.maneuverIneqConstraints(x, params)) / delta
-            g[i] = dC[0]
+            g[i] = dC
 
         return g
 
@@ -592,17 +595,10 @@ class ManeuverPath:
 
             # DEBUG:
             print("Running maneuver optimization...")
-
-            # Set initial guess
-            x_s = self.target_x + np.cos(self.target_approach_angle)*self.approach_pose_offset
-            y_s = self.target_y + np.sin(self.target_approach_angle)*self.approach_pose_offset
-            theta_s = self.target_approach_angle # the starting pose is facing backwards, so the approach angle is the same as the starting orientation rather than adding 180deg
-
             # Initial value for optimization
-            #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
             x0 = [self.start_x_s, self.start_y_s]
-            lower_bounds = [20, 16]
-            upper_bounds = [-2, -5]
+            lower_bounds = [-2, -5]
+            upper_bounds = [20, 16]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
@@ -613,6 +609,8 @@ class ManeuverPath:
             current_pose2D.theta = euler_angles[2]
 
             params = {"current_pose" : [current_pose2D.x,current_pose2D.y,current_pose2D.theta], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 0.1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
+
+            print("Using optimization method: %d" % self.optimization_method)
 
             #==================================================================#
             # vvv Add Autograd gradient functions here if you get to it vvv
@@ -625,8 +623,12 @@ class ManeuverPath:
 
             # # Test Gradients against finite difference method
             # delta = 0.0000001
-            # x = np.array([-5, -3, 1, 1, 1, 1, 1], dtype=np.float)
-            # dx = x
+            # x = np.array([self.start_x_s, self.start_y_s], dtype=np.float)
+            # dx = deepcopy(x)
+            # dx[0] = x[0] + delta
+            # print("Objective: ")
+            # print(self.maneuverObjective(x, params))
+            # print(self.maneuverObjective(dx, params))
             # print("Autograd:")
             # print(self.grad_maneuverObjective(x))
             # print("Finite Difference:")
@@ -646,8 +648,7 @@ class ManeuverPath:
             #==================================================================#
             # scipy.optimize.minimize optimizer
             #==================================================================#
-            use_scipy = False
-            if (use_scipy):
+            if (self.optimization_method == 1):
                 # Set up optimization problem
                 obj = lambda x: self.maneuverObjective(x, params)
                 ineq_con = {'type': 'ineq',
@@ -682,10 +683,9 @@ class ManeuverPath:
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
-            use_ipopt = False
-            if (use_ipopt):
+            if (self.optimization_method == 2):
                 # Initial value for optimization
-                x0_ip = np.array([x_s, y_s])
+                x0_ip = np.array([x0[0], x0[1]])
 
                 nvar = 2
                 x_L = np.array(lower_bounds, dtype=np.float_)
@@ -730,7 +730,9 @@ class ManeuverPath:
                         constraint_sum = constraint_sum + lagrange[1]*constraint_hessian[1,:,:]
                         return obj_factor*self.hessian_maneuverObjective(x) + constraint_sum
 
-                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g, eval_h)
+                # Not using hessian, remove this line when using it
+                nnzh = 0
+                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
                 pyipopt.set_loglevel(0)
 
                 tic = time.time()
@@ -775,8 +777,7 @@ class ManeuverPath:
             #=================================================================#
             # Use hardcoded value
             #=================================================================#
-            use_hardcoded = True
-            if (use_hardcoded):
+            if (self.optimization_method == 0):
                 x_s = x0[0]
                 y_s = x0[1]
 
@@ -830,8 +831,8 @@ class ManeuverPath:
                 # If optimization was successful, publish the new target
                 # position for the A* algorithm (you will want to make this a
                 # separate "goal" value distinct from the roll target position)
-                rospy.set_param("/control_panel_node/goal_x", float(self.pose_s.x))
-                rospy.set_param("/control_panel_node/goal_y", float(self.pose_s.y))
+                rospy.set_param("/control_panel_node/goal_x", float(x_s))
+                rospy.set_param("/control_panel_node/goal_y", float(y_s))
                 self.update_obstacle_end_pose = False
 
                 # Publish the starting pose for the approach b-spline path
