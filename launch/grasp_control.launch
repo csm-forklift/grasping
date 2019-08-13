@@ -39,7 +39,7 @@
     </node>
 
     <!-- Clamp Controller -->
-    <node pkg="grasping" name="clamp_control" type="clamp_control">
+    <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
         <param name="clamp_scale_movement" value="$(arg clamp_scale_movement)"/>
         <param name="clamp_scale_grasp" value="$(arg clamp_scale_grasp)"/>
         <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
