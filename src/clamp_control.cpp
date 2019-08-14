@@ -48,7 +48,8 @@ private:
 	int control_mode;
     std::vector<int> available_control_modes; // vector of possible values for turing on this controller
 
-    double clamp_scale_movement; // adjusts value sent to the arduino controlling the clamp, range: [0, 1]
+    double clamp_scale_movement_up; // adjusts value sent to the arduino for clamp raising, range: [0, 1]
+    double clamp_scale_movement_down; // adjusts value sent to the arduino for clamp lowering, range: [0, 1]
 	double clamp_scale_grasp;
     float clamp_grasp;
 	float clamp_movement;
@@ -68,13 +69,15 @@ public:
 	ClampControl() : nh(""), nh_("~")
 	{
         // Set parameters
-        nh_.param<double>("clamp_scale_movement", clamp_scale_movement, 0.5);
+        nh_.param<double>("clamp_scale_movement_up", clamp_scale_movement_up, 0.5);
+        nh_.param<double>("clamp_scale_movement_down", clamp_scale_movement_down, 0.5);
         nh_.param<double>("clamp_scale_grasp", clamp_scale_grasp, 0.5);
         nh_.param("manual_deadman", manual_deadman_button, 4);
         nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
         nh_.param("timeout", timeout, 1.0);
 
-        std::cout << "Clamp scale movement: " << clamp_scale_movement << '\n';
+        std::cout << "Clamp scale movement up: " << clamp_scale_movement_up << '\n';
+        std::cout << "Clamp scale movement down: " << clamp_scale_movement_down << '\n';
         std::cout << "Clamp scale grasp: " << clamp_scale_grasp << '\n';
 
         clamp_movement_pub = nh_.advertise<std_msgs::Float32>("clamp_movement", 1);
@@ -240,7 +243,8 @@ void ClampControl::lower_clamp()
 {
 	if (limit_down == false)
 	{
-		clamp_movement = 1*clamp_scale_movement;
+        // Positive command lowers the clamp
+		clamp_movement = 1*clamp_scale_movement_down;
 	}
 	else
 	{
@@ -318,7 +322,8 @@ void ClampControl::check_grasp()
 void ClampControl::raise_clamp() {
 	if (limit_up == false)
 	{
-		clamp_movement = -1*clamp_scale_movement;
+        // Negative command raises the clamp
+		clamp_movement = -1*clamp_scale_movement_up;
 	}
 	else
 	{

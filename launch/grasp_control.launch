@@ -7,7 +7,8 @@
     <arg name="use_clamp_arduino" default="false"/>
     <arg name="port_clamp" default="/dev/ttyACM0"/>
     <arg name="roll_radius" default="0.29"/>
-    <arg name="clamp_scale_movement" default="0.5"/>
+    <arg name="clamp_scale_movement_up" default="0.5"/>
+    <arg name="clamp_scale_movement_down" default="0.5"/>
     <arg name="clamp_scale_grasp" default="0.5"/>
     <arg name="target_x" default="0.0"/>
     <arg name="target_y" default="0.0"/>
@@ -40,7 +41,8 @@
 
     <!-- Clamp Controller -->
     <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
-        <param name="clamp_scale_movement" value="$(arg clamp_scale_movement)"/>
+        <param name="clamp_scale_movement_up" value="$(arg clamp_scale_movement_up)"/>
+        <param name="clamp_scale_movement_down" value="$(arg clamp_scale_movement_down)"/>
         <param name="clamp_scale_grasp" value="$(arg clamp_scale_grasp)"/>
         <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
         <remap from="/clamp_control/clamp_grasp" to="/clamp_switch_node/clamp_grasp"/>
