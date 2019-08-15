@@ -288,7 +288,7 @@ public:
             // 'linear_velocity' is used because it relates to the along track error through the 'cos(theta_error)' term, we don't want the direct aproach_distance because we need this comparison to be allowed to have a negative value to know when the roll as been passed
             if(linear_velocity > approach_tolerance){
                 if (cos(theta_error) < 0) {
-                    std::cout << "Need to go backwards!\n";
+                    std::cout << "[" << ros::this_node::getName() << "]: Need to go backwards!\n";
                     // Change gear to reverse
 
                     steering_angle = -steering_angle;
