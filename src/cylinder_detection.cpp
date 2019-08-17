@@ -186,7 +186,7 @@ public:
         nh_.param<double>("target_x", target_point.x, 1.0);
         nh_.param<double>("target_y", target_point.y, 0.0);
         nh_.param<double>("/roll/radius", circle_radius, 0.200);
-        nh_.param<double>("target_tolerance", target_tolerance, circle_radius);
+        nh_.param<double>("target_tolerance", target_tolerance, 2*circle_radius);
         nh_.param<bool>("debug", debug, false);
 
         //===== ROS Objects =====//
@@ -263,11 +263,11 @@ public:
         use_threshold_filter = true;
         check_center_points = true;
         use_variance_filter = true;
-        use_location_filter = false;
+        use_location_filter = true;
         //=============================//
 
 
-        // Get fixed rotations and translations for the point cloud trasnforms
+        // Get fixed rotations and translations for the point cloud transforms
 
         // Degrees are first variable of thetas. modify for desired angles of view off of center line
         theta_min = 41.0 * (M_PI/180.0); // convert degrees to radians
@@ -1444,18 +1444,14 @@ public:
                 closest_point.x = points.at(i).x;
                 closest_point.y = points.at(i).y;
             }
-
-
-
-
         }
 
         // Clear all the points
         points.clear();
 
         // Check if minimum distance is within range, if so store that point, if not leave the points vector empty
-        cout << "Min dist: " << min_distance_sq <<'\n';
-        target_tolerance = 1.5;
+        // DEBUG: Show the current minimum distance seen
+        //cout << "Min dist: " << min_distance_sq <<'\n';
         if (min_distance_sq < pow(target_tolerance, 2)) {
             points.push_back(closest_point);
         }

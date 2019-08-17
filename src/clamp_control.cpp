@@ -9,6 +9,7 @@
 #include <std_msgs/Int8.h>
 #include <std_msgs/Int16.h>
 #include <sensor_msgs/Joy.h>
+#include <sys/time.h> // used by getWallTime()
 
 class ClampControl
 {
@@ -49,7 +50,15 @@ private:
     std::vector<int> available_control_modes; // vector of possible values for turing on this controller
 
     double clamp_scale_movement_up; // adjusts value sent to the arduino for clamp raising, range: [0, 1]
+    double clamp_scale_movement_up_high; // speed used for the fast portion of the velocity profile
+    double high_time_up; // the amount of time for traveling in high speed going upwards
+    bool speedup_up; // whether to use the fast raise procedure
+    double speedup_start_up; // starting time of the speedup procedure
     double clamp_scale_movement_down; // adjusts value sent to the arduino for clamp lowering, range: [0, 1]
+    double clamp_scale_movement_down_high; // speed used for the fast portion of the velocity profile
+    double high_time_down; // the amount of time for traveling in high speed going downwards
+    bool speedup_down; // whether to use the fast lower procedure
+    double speedup_start_down; // starting time of the speedup procedure
 	double clamp_scale_grasp;
     float clamp_grasp;
 	float clamp_movement;
@@ -71,6 +80,10 @@ public:
         // Set parameters
         nh_.param<double>("clamp_scale_movement_up", clamp_scale_movement_up, 0.5);
         nh_.param<double>("clamp_scale_movement_down", clamp_scale_movement_down, 0.5);
+        nh_.param<double>("clamp_scale_movement_up_high", clamp_scale_movement_up_high, 0.75);
+        nh_.param<double>("clamp_scale_movement_down_high", clamp_scale_movement_down_high, 0.65);
+        nh_.param<double>("high_time_up", high_time_up, 1.0);
+        nh_.param<double>("high_time_down", high_time_down, 1.0);
         nh_.param<double>("clamp_scale_grasp", clamp_scale_grasp, 0.5);
         nh_.param("manual_deadman", manual_deadman_button, 4);
         nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
@@ -101,7 +114,7 @@ public:
         //signal(SIGINT, ClampControl::shutdownHandler);
 
         // Initialize States
-		operation_mode = 0; // starting with raising clamp
+		operation_mode = 0; // starting with lowering clamp
         force = 0;
         force_threshold = 800;
         stretch = 0;
@@ -343,6 +356,14 @@ bool checkControlMode(int mode, std::vector<int> vector_of_modes)
     else {
         return false;
     }
+}
+
+double getWallTime() {
+    struct timeval time;
+    if (gettimeofday(&time, NULL)) {
+        return 0;
+    }
+    return (double)time.tv_sec + (double)time.tv_usec*0.000001;
 }
 
 void ClampControl::controller()
