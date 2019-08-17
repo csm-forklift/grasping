@@ -51,7 +51,7 @@
     <!--==================-->
     <!-- Approach Control -->
     <!--==================-->
-    <node pkg="grasping" name="approach_controller" type="approach_controller">
+    <node pkg="grasping" name="approach_controller" type="approach_controller" output="screen">
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
         <param name="/roll/radius" value="$(arg roll_radius)"/>
