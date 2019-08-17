@@ -783,6 +783,9 @@ class ManeuverPath:
 
                 self.optimization_success = 1
                 message = "used hardcoded starting value"
+            #=================================================================#
+            # Use hardcoded value
+            #=================================================================#
 
             # Set initial pose angle for the forklift to be the direction facing the roll
             theta_s = np.arctan2(self.target_y - y_s, self.target_x - x_s)
