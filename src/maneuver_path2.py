@@ -597,8 +597,8 @@ class ManeuverPath:
             print("Running maneuver optimization...")
             # Initial value for optimization
             x0 = [self.start_x_s, self.start_y_s]
-            lower_bounds = [-2, -5]
-            upper_bounds = [20, 16]
+            lower_bounds = [-2, -16]
+            upper_bounds = [20, 5]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
@@ -651,16 +651,18 @@ class ManeuverPath:
             if (self.optimization_method == 1):
                 # Set up optimization problem
                 obj = lambda x: self.maneuverObjective(x, params)
+                obj_bfgs = lambda x: self.maneuverObjective(x, params)
                 ineq_con = {'type': 'ineq',
                             'fun' : lambda x: self.maneuverIneqConstraints(x, params),
-                            'jac' : self.jac_maneuverIneqConstraints}
+                            'jac' : None}
                 bounds = [(lower_bounds[0], upper_bounds[0]),
                           (lower_bounds[1], upper_bounds[1])]
 
                 # Optimize
                 tic = time.time()
-                res = minimize(obj, x0, jac=self.grad_maneuverObjective, method='SLSQP', bounds=bounds, constraints=ineq_con)
-                # res = minimize(obj, x0, method='BFGS', bounds=bounds, constraints=ineq_con)
+                #res = minimize(obj, x0, jac=self.grad_maneuverObjective, method='SLSQP', bounds=bounds, constraints=ineq_con)
+                #res = minimize(obj, x0, method='SLSQP', bounds=bounds, constraints=ineq_con)
+                res = minimize(obj_bfgs, x0, method='COBYLA', bounds=bounds, constraints=ineq_con)
                 toc = time.time()
 
                 # DEBUG:
@@ -786,6 +788,9 @@ class ManeuverPath:
             #=================================================================#
             # Use hardcoded value
             #=================================================================#
+
+            # Print optimized point
+            print("Approach starting point: (%0.4f, %0.4f)" % (x_s, y_s))
 
             # Set initial pose angle for the forklift to be the direction facing the roll
             theta_s = np.arctan2(self.target_y - y_s, self.target_x - x_s)
