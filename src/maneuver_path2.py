@@ -676,6 +676,10 @@ class ManeuverPath:
                 x_s = res.x[0]
                 y_s = res.x[1]
 
+                # Update starting point to be the current result
+                self.start_x_s = x_s
+                self.start_y_s = y_s
+
                 self.optimization_success = res.success
                 message = res.message
             #==================================================================#
