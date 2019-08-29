@@ -3,6 +3,10 @@
     <!--==========================-->
     <!-- Arguments and Parameters -->
     <!--==========================-->
+    <!-- Constants -->
+    <arg name="pi" value="3.141592653589793"/>
+    <arg name="debug_setup_tf" value="false"/>
+    
     <param name="/target_x" value="13"/>
     <param name="/target_y" value="5"/>
     <param name="/target_approach_angle" value="-0.78539816339"/>
@@ -10,11 +14,18 @@
     <!-- Load Forklift Dimensions -->
     <rosparam file="$(find setup_tf)/config/forklift.yaml" command="load"/>
 
+     <!--==================-->
+    <!-- Setup Transforms -->
+    <!--==================-->
+    <include file="$(find setup_tf)/launch/setup_tf.launch">
+        <arg name="debug" value="$(arg debug_setup_tf)"/>
+    </include>
+    
     <!--===================-->
     <!-- Master Controller -->
     <!--===================-->
     <node pkg="motion_testing" type="master_controller.py" name="master_controller" output="screen">
-        <param name="~debug_test" value="grasp" type="str"/>
+        <param name="~debug_test" value="none" type="str"/>
     </node>
 
     <!--============================-->
@@ -54,10 +65,24 @@
     <!--======================-->
     <!-- Velocity Controllers -->
     <!--======================-->
-    <node pkg="robust_navigation" type="velocity_controller_forward" name="velocity_controller_forward" respawn="true"/>
-    <node pkg="robust_navigation" type="velocity_controller_reverse" name="velocity_controller_reverse" respawn="true"/>
+    <node pkg="robust_navigation" type="velocity_controller" name="velocity_controller" respawn="true">
+		<param name="heading_gain" value="1.0"/>
+		<param name="cte_gain" value="0.2"/>
+		<param name="derivative_heading_gain" value="1.0"/>
+		<param name="derivative_cte_gain" value="0.1"/>
+		<param name="cross_track_error_deadband" value="0.125"/>
+		<param name="min_delta_time" value="0.1"/>
+		<param name="num_of_segments_ahead" value="10"/>
+		<param name="goal_tolerance" value="0.5"/>
+		<param name="maximum_linear_velocity" value="0.25"/>
+		<param name="current_angle_error_max" value="$(eval 75.0*(arg('pi')/180.0))"/>
+	</node>
+    <!-- Only run this if not using 'localization_velocity_imu.launch' on the Pi -->
     <node pkg="sensors" type="velocity_conversion" name="velocity_conversion" output="screen">
         <param name="use_covariance" value="false"/>
+        <remap from="/velocity_node/velocity" to="/velocity_node/velocity_setpoint"/>
+        <remap from="/steering_node/filtered_angle" to="/steering_node/angle_setpoint"/>
+        <remap from="~twist" to="/cmd_vel_mux/input/teleop"/>
     </node>
 
     <!--===================-->
