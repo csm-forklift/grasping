@@ -1413,11 +1413,11 @@ public:
         return sqrt(pow(x - x_c, 2) + pow(y - y_c, 2));
     }
 
-    void targetFilter(std::vector<cv::Point> &points, cv::Point target)
+    void closestToTarget(std::vector<cv::Point> &points, cv::Point target)
     {
         // Checks all the potential points against a target point and accepts the closest one within a range. If no points are within the range, it returns an empty points vector.
 
-        double min_distance_sq = 10.0; // current minimum squared distance
+        double min_distance_sq = 1000.0; // current minimum squared distance
         cv::Point closest_point; // the current closest point to the target
 
         // Before cycling through all the points, convert the target point into sensor frame.
@@ -1455,6 +1455,14 @@ public:
         if (min_distance_sq < pow(target_tolerance, 2)) {
             points.push_back(closest_point);
         }
+    }
+
+    void targetFilter(std::vector<cv::Point> &points, cv::Point target)
+    {
+        // Sorts the 'points' vector in order from closest to target to farthest away.
+
+        
+
     }
 
     void sensorToImage(float sensor_x_in, float sensor_y_in, int& image_x_out, int& image_y_out)
