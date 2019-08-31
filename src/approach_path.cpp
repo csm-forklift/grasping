@@ -21,6 +21,7 @@
 
 #include <iostream>
 #include <vector>
+#include <algorithm> // find
 #include <cmath> // used for M_PI (pi constant)
 #include <Eigen>
 #include <ros/ros.h>
@@ -45,6 +46,8 @@ private:
     vector<int> m_k; // 'k' vector
     int m_p; // Polynomial order
     vector<Vector2d> m_path; // Vector path
+    int path_type; // type of path to generate
+    vector<int> available_path_types; // allowable path types (0 = full spline, 1 = from roll, 2 = straight line)
 
     // ROS Objects
     ros::NodeHandle nh_;
@@ -67,15 +70,31 @@ private:
     double roll_radius; // radius of the paper roll
 
 public:
-    GraspPath() : nh_("~")
+    GraspPath() : nh_("~"),available_path_types{0,1,2}
     {
         // Store parameters
+        nh_.param<int>("path/type", path_type, 0);
         nh_.param<int>("path/polynomial_order", m_p, 3); // Define the polynomial order (prefer cubic, p = 3)
         nh_.param<int>("path/resolution", m_x_size, 20); // Define resolution of the line, this is the number of points on the path
         nh_.param<double>("/forklift/body/length", body_length, 2.5601);
         nh_.param<double>("/forklift/body/total", total_length, 3.5659);
         nh_.param<double>("/forklift/body/base_to_clamp", base_to_clamp, 1.0058);
         nh_.param<double>("/roll/radius", roll_radius, 0.20);
+
+        // Parameter Input Checking
+        vector<int>::iterator it;
+        it = find(available_path_types.begin(), available_path_types.end(), path_type);
+        if (it == available_path_types.end()) {
+            std::string available_types = "";
+            for (int i = 0; i < available_path_types.size(); ++i) {
+                available_types += to_string(available_path_types.at(i));
+                if (i < (available_path_types.size() - 1)) {
+                    available_types += ", ";
+                }
+            }
+            ROS_INFO("Invalid path_type: %d.\nSetting to default: 0\nAvailable types: %s", path_type, available_types.c_str());
+            path_type = 0;
+        }
 
         // Define ROS Objects
         pub_path = nh_.advertise<nav_msgs::Path>("path", 1);
@@ -214,17 +233,6 @@ public:
          double x_f = forklift_pose.pose.position.x; // x location of forklift
          double y_f = forklift_pose.pose.position.y; // y location of forklift
 
-         // Get yaw angle from quaternion
-         tf::Quaternion q(
-             forklift_pose.pose.orientation.x,
-             forklift_pose.pose.orientation.y,
-             forklift_pose.pose.orientation.z,
-             forklift_pose.pose.orientation.w
-         );
-         tf::Matrix3x3 m(q);
-         double roll, pitch, yaw;
-         m.getRPY(roll, pitch, yaw);
-
          // Calculate the control points for the desired path
          // Calculate distance to roll for determining which waypoints to use
          double roll_distance = sqrt(pow(x_f - x_r, 2) + pow(y_f - y_r, 2));
@@ -266,6 +274,27 @@ public:
          * Generates control points for a straight line from the forklift's
          * current position to the roll's current position.
          */
+
+        // Get the two end points, then place two more points inbetween along a straight line. This allows the polynomial to remain 3rd order.
+        // Get roll position (x_r, y_r) and desired approach angle (alpha)
+        double x_r = roll_pose.pose.position.x; // x location of roll
+        double y_r = roll_pose.pose.position.y; // y location of roll
+
+        double x_f = forklift_pose.pose.position.x; // x location of forklift
+        double y_f = forklift_pose.pose.position.y; // y location of forklift
+
+        // Line Angle
+        double theta = atan2(y_r - y_f, x_r - x_f);
+
+        // Line length
+        double roll_distance = sqrt(pow(x_f - x_r, 2) + pow(y_f - y_r, 2));
+
+        // Add control points
+        m_control_points.clear();
+        m_control_points.push_back(Vector2d(x_f, y_f));
+        m_control_points.push_back(Vector2d(x_f + roll_distance/3*cos(theta), y_f + roll_distance/3*sin(theta)));
+        m_control_points.push_back(Vector2d(x_f + 2*roll_distance/3*cos(theta), y_f + 2*roll_distance/3*sin(theta)));
+        m_control_points.push_back(Vector2d(x_r, y_r));
     }
 
     // De Boor's Algorithm Implementation
@@ -407,7 +436,15 @@ public:
         // Update the forklift pose
         forklift_pose = msg;
 
-        fullSplineControlPoints();
+        if (path_type == 2) {
+            straightLineControlPoints();
+        }
+        else if (path_type == 1) {
+            fromRollControlPoints();
+        }
+        else {
+            fullSplineControlPoints();
+        }
 
         updateControlPoints();
         publishControlPoints();
