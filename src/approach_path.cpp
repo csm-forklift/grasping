@@ -203,7 +203,8 @@ public:
     void straightLineControlPoints()
     {
         /**
-         * Generates control points for a straight line from the forklift's current position to the roll's current position. 
+         * Generates control points for a straight line from the forklift's
+         * current position to the roll's current position.
          */
     }
 
