@@ -114,6 +114,99 @@ public:
         }
     }
 
+    void fullSplineControlPoints()
+    {
+        /**
+         * Creates the control points for the full b-spline path that considers
+         * the roll approach pose as well as the full forklift pose.
+         */
+
+        // Get roll position (x_r, y_r) and desired approach angle (alpha)
+        double x_r = roll_pose.pose.position.x; // x location of roll
+        double y_r = roll_pose.pose.position.y; // y location of roll
+        tf::Quaternion roll_q(
+            roll_pose.pose.orientation.x,
+            roll_pose.pose.orientation.y,
+            roll_pose.pose.orientation.z,
+            roll_pose.pose.orientation.w
+        );
+        double roll_r, pitch_r, alpha;
+        tf::Matrix3x3(roll_q).getRPY(roll_r, pitch_r, alpha);
+
+        double x_f = forklift_pose.pose.position.x; // x location of forklift
+        double y_f = forklift_pose.pose.position.y; // y location of forklift
+
+        // Get yaw angle from quaternion
+        tf::Quaternion q(
+            forklift_pose.pose.orientation.x,
+            forklift_pose.pose.orientation.y,
+            forklift_pose.pose.orientation.z,
+            forklift_pose.pose.orientation.w
+        );
+        tf::Matrix3x3 m(q);
+        double roll, pitch, yaw;
+        m.getRPY(roll, pitch, yaw);
+
+        // Calculate the control points for the desired path
+        // Calculate distance to roll for determining which waypoints to use
+        double roll_distance = sqrt(pow(x_f - x_r, 2) + pow(y_f - y_r, 2));
+        m_control_points.clear();
+
+        if (roll_distance < (base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+
+            // Make polynomial order 1 (a line)
+            m_p = 1;
+        }
+        else if (roll_distance < (2*base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+
+            // Make polynomial order 2 (quadratic)
+            m_p = 2;
+        }
+        else if (roll_distance < (total_length + base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
+        else if (roll_distance < (total_length + 2*base_to_clamp + roll_radius)) {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
+        else {
+            m_control_points.push_back(Vector2d(x_f, y_f));
+            m_control_points.push_back(Vector2d(base_to_clamp*cos(yaw) + x_f, base_to_clamp*sin(yaw) + y_f));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
+            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
+        }
+    }
+
+    void fromRollControlPoints()
+    {
+        /**
+         * Generates control points for a b-spline that does not consider
+         * forklift orientation. It generates appropriate control points coming
+         * out from the roll in the desired approach direction and then simply
+         * uses the forklifts current (x,y) position as the final point.
+         */
+    }
+
+    void straightLineControlPoints()
+    {
+        /**
+         * Generates control points for a straight line from the forklift's current position to the roll's current position. 
+         */
+    }
+
     // De Boor's Algorithm Implementation
     Vector2d deBoors(int k, double x, const vector<double> &t, const vector<Vector2d> &c, int p)
     {
@@ -253,73 +346,7 @@ public:
         // Update the forklift pose
         forklift_pose = msg;
 
-        // Get roll position (x_r, y_r) and desired approach angle (alpha)
-        double x_r = roll_pose.pose.position.x; // x location of roll
-        double y_r = roll_pose.pose.position.y; // y location of roll
-        tf::Quaternion roll_q(
-            roll_pose.pose.orientation.x,
-            roll_pose.pose.orientation.y,
-            roll_pose.pose.orientation.z,
-            roll_pose.pose.orientation.w
-        );
-        double roll_r, pitch_r, alpha;
-        tf::Matrix3x3(roll_q).getRPY(roll_r, pitch_r, alpha);
-
-        double x_f = forklift_pose.pose.position.x; // x location of forklift
-        double y_f = forklift_pose.pose.position.y; // y location of forklift
-
-        // Get yaw angle from quaternion
-        tf::Quaternion q(
-            forklift_pose.pose.orientation.x,
-            forklift_pose.pose.orientation.y,
-            forklift_pose.pose.orientation.z,
-            forklift_pose.pose.orientation.w
-        );
-        tf::Matrix3x3 m(q);
-        double roll, pitch, yaw;
-        m.getRPY(roll, pitch, yaw);
-
-        // Calculate the control points for the desired path
-        // Calculate distance to roll for determining which waypoints to use
-        double roll_distance = sqrt(pow(x_f - x_r, 2) + pow(y_f - y_r, 2));
-        m_control_points.clear();
-
-        if (roll_distance < (base_to_clamp + roll_radius)) {
-            m_control_points.push_back(Vector2d(x_f, y_f));
-            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-
-            // Make polynomial order 1 (a line)
-            m_p = 1;
-        }
-        else if (roll_distance < (2*base_to_clamp + roll_radius)) {
-            m_control_points.push_back(Vector2d(x_f, y_f));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-
-            // Make polynomial order 2 (quadratic)
-            m_p = 2;
-        }
-        else if (roll_distance < (total_length + base_to_clamp + roll_radius)) {
-            m_control_points.push_back(Vector2d(x_f, y_f));
-            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-        }
-        else if (roll_distance < (total_length + 2*base_to_clamp + roll_radius)) {
-            m_control_points.push_back(Vector2d(x_f, y_f));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-        }
-        else {
-            m_control_points.push_back(Vector2d(x_f, y_f));
-            m_control_points.push_back(Vector2d(base_to_clamp*cos(yaw) + x_f, base_to_clamp*sin(yaw) + y_f));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp + total_length)*cos(alpha) + x_r, (roll_radius + base_to_clamp + total_length)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d((roll_radius + 2*base_to_clamp)*cos(alpha) + x_r, (roll_radius + 2*base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d((roll_radius + base_to_clamp)*cos(alpha) + x_r, (roll_radius + base_to_clamp)*sin(alpha) + y_r));
-            m_control_points.push_back(Vector2d(roll_radius*cos(alpha) + x_r, roll_radius*sin(alpha) + y_r));
-        }
+        fullSplineControlPoints();
 
         updateControlPoints();
         publishControlPoints();

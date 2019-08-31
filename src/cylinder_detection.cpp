@@ -25,6 +25,7 @@
 2) Add in the ability to check for circle of different radii. That way you could add a tolerance on the radius or you could search for multiple circle types.
 3) Finish function that finds the local maxima to determine which points should be considered potentials (this should help to avoid placing cylinders next to walls, since the there should be many local maxima near a wall).
 4) Filter out planes using PCL segmentation
+5) Convert the 'points' vector into 'target' frame rather than leaving it in image frame whenever you find them. Then pass the target frame version to all of the filters.
  */
 
 #include <iostream>
@@ -1053,7 +1054,7 @@ public:
 
     void generateAccumulatorUsingImage(cv::Mat &image, cv::Mat &accumulator)
     {
-        // Iterate through each point in the image (the image should be of type 'CV_8U', if not change the template type from 'uint8_t' to whatever type matches the matrix image type), for each point that is not 0 create a circle andn increment the pixel values in the accumulator along that circle.
+        // Iterate through each point in the image (the image should be of type 'CV_8U', if not change the template type from 'uint8_t' to whatever type matches the matrix image type), for each point that is not 0 create a circle and increment the pixel values in the accumulator along that circle.
         int num_rows = image.rows;
         int num_cols = image.cols;
 
@@ -1461,8 +1462,32 @@ public:
     {
         // Sorts the 'points' vector in order from closest to target to farthest away.
 
-        
+        // Create copy of points to iterate through and delete entries
+        std::vector<cv::Point> points_copy(points);
 
+        // Create vector for holding distances from target
+        std::vector<double> distance_sq_from_target(points.size());
+
+        // Calculate the distances
+        for (int i = 0; i < points.size(); ++i) {
+            double sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y;
+            imageToSensor(points.at(i).x, points.at(i).y, sensor_frame_x, sensor_frame_y);
+            sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
+            distance_sq_from_target.push_back(sqrt(pow(target_frame_x - target.x, 2) + pow(target_frame_y - target.y, 2)));
+        }
+
+        // Sort the 'points' vector by ascending distance from target
+        for (int i = 0; i < points.size(); ++i) {
+            // Get the index of the minimum distance
+            int min_distance_index = std::distance(distance_sq_from_target.begin(), std::min_element(distance_sq_from_target.begin(), distance_sq_from_target.end()));
+
+            // Add point to corresponding position
+            points.at(i) = points_copy.at(min_distance_index);
+
+            // Delete element from vectors
+            points_copy.erase(points_copy.begin() + min_distance_index);
+            distance_sq_from_target.erase(distance_sq_from_target.begin() + min_distance_index);
+        }
     }
 
     void sensorToImage(float sensor_x_in, float sensor_y_in, int& image_x_out, int& image_y_out)
