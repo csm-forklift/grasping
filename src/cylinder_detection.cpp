@@ -225,7 +225,7 @@ public:
         }
         ROS_INFO("%s", message.c_str());
 
-        //===== Tuning Paramters =====//
+        //===== Tuning Parameters =====//
         // These parameters are all based on the sensor link frame (where Z axis is up)
         max_distance_x = 6; // m
         min_distance_x = 0; // m
@@ -543,7 +543,7 @@ public:
                 // }
                 // out_file.close();
             }
-           // cout << "After Variance: " << potentials.size() << '\n';
+            // cout << "After Variance: " << potentials.size() << '\n';
             // Find the point closest to the desired target
             // Will only return the single closest point within range (otherwise no points returned)
             if (use_location_filter) {
