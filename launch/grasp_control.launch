@@ -12,8 +12,9 @@
     <arg name="clamp_scale_grasp" default="0.5"/>
     <arg name="target_x" default="0.0"/>
     <arg name="target_y" default="0.0"/>
-    <arg name="target_tolerance" default="$(eval arg('roll_radius')*2)"/>
     <arg name="target_frame" default="/odom"/>
+    <arg name="target_tolerance" default="$(eval arg('roll_radius')*2)"/>
+    <arg name="sensor_threshold" default="1.0"/>
     <arg name="grasp_angle" default="0.7854"/>
     <arg name="angle_tolerance" default="0.01"/>
     <arg name="K_angle" default="1.0"/>
@@ -83,6 +84,7 @@
         <param name="target_x" value="$(arg target_x)"/>
         <param name="target_y" value="$(arg target_y)"/>
         <param name="target_tolerance" value="$(arg target_tolerance)"/>
+        <param name="sensor_threshold" value="$(arg sensor_threshold)"/>
     </node>
 
 </launch>

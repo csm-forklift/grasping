@@ -135,6 +135,7 @@ private:
     double sigma_squared;
     double mahalanobisDistance;
     double mahalanobisDistanceThreshold = 3;
+    double sensor_threshold; // when the clamp to target distance is within this value, the mahalanobis distance threshold becomes very small
     double intervalStartTime;
     double intervalTimeCount;
     double currentWallTime;
@@ -188,6 +189,7 @@ public:
         nh_.param<double>("target_y", target_point.y, 0.0);
         nh_.param<double>("/roll/radius", circle_radius, 0.200);
         nh_.param<double>("target_tolerance", target_tolerance, 2*circle_radius);
+        nh_.param<double>("sensor_threshold", sensor_threshold, 1.0);
         nh_.param<bool>("debug", debug, false);
 
         //===== ROS Objects =====//
@@ -544,8 +546,10 @@ public:
                 // out_file.close();
             }
             // cout << "After Variance: " << potentials.size() << '\n';
+
             // Find the point closest to the desired target
-            // Will only return the single closest point within range (otherwise no points returned)
+            // targetFilter(): deletes points outside 'target_tolerance' and returns the points sorted by distance from target
+            // closestToTarget(): will only return the single closest point within range (otherwise no points returned)
             if (use_location_filter) {
                 targetFilter(potentials, target_point);
             }
@@ -595,6 +599,25 @@ public:
                 if (mahalanobis_vector.at(i) < mahalanobis_vector.at(min_distance_index)) {
                     min_distance_index = i;
                 }
+            }
+
+            // If the forklift clamp shortarm is within a certain distance from the target point, make the mahalanobis distance threshold very small to keep it from updating the point once the roll cannot be seen due to the lidar cutoff.
+            tf::StampedTransform transform;
+            // Get transform from sensor to target frame
+            tf_listener.waitForTransform(target_frame.c_str(), "clamp_short_arm", ros::Time::now(), ros::Duration(0.051));
+            try {
+                tf_listener.lookupTransform(target_frame.c_str(), "/clamp_short_arm", ros::Time(0), transform);
+            }
+            catch(tf::TransformException& ex) {
+                ROS_ERROR("Target Transform Exception: %s", ex.what());
+            }
+            double clamp_x = transform.getOrigin().x();
+            double clamp_y = transform.getOrigin().y();
+            // Get distance to target point
+            double clamp_to_target = sqrt(pow(clamp_x - target_point.x, 2) + pow(clamp_y - target_point.y, 2));
+            if (clamp_to_target < sensor_threshold) {
+                // Make it a really small number so only very close values are used to update the target.
+                mahalanobisDistanceThreshold = 0.01;
             }
 
             if (mahalanobis_vector.at(min_distance_index) < mahalanobisDistanceThreshold) {
@@ -1474,6 +1497,15 @@ public:
             imageToSensor(points.at(i).x, points.at(i).y, sensor_frame_x, sensor_frame_y);
             sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
             distance_sq_from_target.push_back(sqrt(pow(target_frame_x - target.x, 2) + pow(target_frame_y - target.y, 2)));
+        }
+
+        // Remove points that are outside the target tolerance
+        double target_tolerance_sq = pow(target_tolerance, 2);
+        for (int i = distance_sq_from_target.size()-1; i >= 0; --i) {
+            if (distance_sq_from_target.at(i) > target_tolerance_sq) {
+                distance_sq_from_target.erase(distance_sq_from_target.begin() + i);
+                points.erase(points.begin() + i);
+            }
         }
 
         // Sort the 'points' vector by ascending distance from target

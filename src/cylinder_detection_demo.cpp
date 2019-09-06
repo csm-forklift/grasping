@@ -224,7 +224,7 @@ public:
         filter_z_high = 0.1500; // m
         resolution = 256.0; // pixels/m, 256 approx. = 1280 pixels / 5 m
         rotation_resolution = 0.01; // radians/section
-        num_potentials = 5; // number of maximums to check in accumulator
+        num_potentials = 3; // number of maximums to check in accumulator
         // Default minimum is number of pixels making 1/5 of a circle with a single pixel line
         threshold_low = (1.0/5)*(2*round(circle_radius*resolution) - 1);
         // Default maximum is number of pixels making half of a circle with 2 layers of pixels
@@ -514,10 +514,13 @@ public:
             // out_file.close();
         }
         // cout << "After Variance: " << potentials.size() << '\n';
+
         // Find the point closest to the desired target
-        // Will only return the single closest point within range (otherwise no points returned)
+        // targetFilter(): deletes points outside 'target_tolerance' and returns the points sorted by distance from target
+        // closestToTarget(): will only return the single closest point within range (otherwise no points returned)
         if (use_location_filter) {
-            targetFilter(potentials, target_point);
+            closestToTarget(potentials, target_point);
+            //targetFilter(potentials, target_point);
         }
         //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
         //cout << '\n';
@@ -1327,6 +1330,15 @@ public:
             imageToSensor(points.at(i).x, points.at(i).y, sensor_frame_x, sensor_frame_y);
             sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
             distance_sq_from_target.push_back(sqrt(pow(target_frame_x - target.x, 2) + pow(target_frame_y - target.y, 2)));
+        }
+
+        // Remove points that are outside the target tolerance
+        double target_tolerance_sq = pow(target_tolerance, 2);
+        for (int i = distance_sq_from_target.size()-1; i >= 0; --i) {
+            if (distance_sq_from_target.at(i) > target_tolerance_sq) {
+                distance_sq_from_target.erase(distance_sq_from_target.begin() + i);
+                points.erase(points.begin() + i);
+            }
         }
 
         // Sort the 'points' vector by ascending distance from target

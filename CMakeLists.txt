@@ -151,6 +151,7 @@ add_executable(cylinder_detection_demo src/cylinder_detection_demo.cpp)
 add_executable(approach_controller src/approach_controller.cpp)
 add_executable(clamp_control src/clamp_control.cpp)
 add_executable(clamp_control_test_node src/clamp_control_test_node.cpp)
+add_executable(roll_pose_publish src/roll_pose_publish.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -174,3 +175,4 @@ target_link_libraries(cylinder_detection_demo ${catkin_LIBRARIES})
 target_link_libraries(approach_controller ${catkin_LIBRARIES})
 target_link_libraries(clamp_control ${catkin_LIBRARIES})
 target_link_libraries(clamp_control_test_node ${catkin_LIBRARIES})
+target_link_libraries(roll_pose_publish ${catkin_LIBRARIES})
