@@ -112,7 +112,8 @@ private:
     bool check_center_points; // set to true to remove potential locations which contain points within the cylinder surface
     bool use_variance_filter; // filters points based off the variance calculated using points within the vicinity of the expected circle
     bool use_location_filter; // Rejects all points which do not lie near the desired goal location (this should return only one point at most)
-    int num_of_points_in_filter =1; // For memory update points, need to start at 1 since we have a temp target point
+    bool use_mahalanobis; // uses mahalanobis distance filtering for target point
+    int num_of_points_in_filter = 1; // For memory update points, need to start at 1 since we have a temp target point
     int interval_count = 1;
     std::vector<double> prior_points_x; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
     std::vector<double> prior_points_y; // stores the x position read in from cylinder detection that is within the Mahalanobis distance threshold
@@ -241,6 +242,7 @@ public:
         check_center_points = true;
         use_variance_filter = true;
         use_location_filter = false;
+        use_mahalanobis = true;
         //=============================//
 
 
@@ -530,91 +532,203 @@ public:
             return;
         }
 
-        // // DEBUG: Hightlight the max point with a circle
-        // cv::Mat top_image_rgb;
-        // cv::cvtColor(top_image, top_image_rgb, cv::COLOR_GRAY2RGB);
-        // cv::circle(top_image_rgb, cv::Point(circle_index_x, circle_index_y), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
-        // cv::drawMarker(top_image_rgb, cv::Point(circle_index_x, circle_index_y), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
-        // cv::Mat top_image_fixed_rgb;
-        // cv::cvtColor(top_image_fixed, top_image_fixed_rgb, cv::COLOR_GRAY2RGB);
-        // cv::circle(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), round(circle_radius*resolution), cv::Scalar(0, 0, USHRT_MAX), 1, cv::LINE_8);
-        // cv::drawMarker(top_image_fixed_rgb, cv::Point(circle_index_x + x_offset_pixels, circle_index_y + y_offset_pixels), cv::Scalar(0, USHRT_MAX, 0), cv::MARKER_CROSS, 10);
+        //================================================================//
+        // Mahalanobis Distance Filter with Bayesian Estimator
+        //================================================================//
+        if (use_mahalanobis) {
+            float sensor_frame_x;
+            float sensor_frame_y;
+            double target_frame_x;
+            double target_frame_y;
 
-        // // DEBUG: test visualization
-        // viewer.removePointCloud("scene_cloud");
-        // viewer.addPointCloud(scene_cloud, "scene_cloud");
-        // viewer.addCoordinateSystem(1.0);
-        // viewer.spinOnce();
+            double mean_x = 0.0;
+            double mean_y = 0.0;
+            double sum_x = 0.0;
+            double sum_y = 0.0;
+            double point_count = 5;
 
-        // // DEBUG: Show image
-        // cv::namedWindow("Top Image Fixed", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image Fixed", 700, 700);
-        // cv::imshow("Top Image Fixed", top_image_fixed_rgb);
-        //
-        // cv::namedWindow("Top Image Contours", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image Contours", 700, 700);
-        // cv::imshow("Top Image Contours", top_image_contours);
-        //
-        // cv::namedWindow("Top Image", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Top Image", 900, 1000);
-        // cv::imshow("Top Image", top_image);
-        //
-        // cv::namedWindow("Accumulator", cv::WINDOW_NORMAL);
-        // cv::resizeWindow("Accumulator", 900, 1000);
-        // cv::imshow("Accumulator", accumulator_scaled);
-        //
-        // cvWaitKey(1);
+            std::vector<double> mahalanobis_vector;
+
+            for (int i = 0; i < potentials.size(); ++i) {
+                // Convert from image pixels(potentials) to meters(sensor_frame)
+                imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
+
+                // Convert the sensor frame point into the target frame
+                sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
+
+                currentWallTime = getWallTime();
+
+                // Calculate the mahalanobis distance using previous sigmas and target point values
+                mahalanobisDistance = sqrt(pow(target_frame_x-target_point.x,2)/sigma_squared_x + pow(target_frame_y-target_point.y,2)/sigma_squared_y);
+
+                mahalanobis_vector.push_back(mahalanobisDistance);
+            }
+
+            // Get index of the smallest mahalanobis distance
+            int min_distance_index = 0;
+            for (int i = 1; i < mahalanobis_vector.size(); ++i) {
+                if (mahalanobis_vector.at(i) < mahalanobis_vector.at(min_distance_index)) {
+                    min_distance_index = i;
+                }
+            }
+
+            if (mahalanobis_vector.at(min_distance_index) < mahalanobisDistanceThreshold) {
+                // Reset mahalanobis distance threshold
+                mahalanobisDistanceThreshold = 3;
+
+                /*
+                // If a point is valid we need to update the measurement sum and point variance before we do bayesian update
+                // this is becuase the first update is the frequentist approach, however, we need to then use this to do "memory update"
+                num_of_points_in_filter++;
+                */
+                // Convert from image pixels(potentials) to meters(sensor_frame)
+                imageToSensor(potentials.at(min_distance_index).x, potentials.at(min_distance_index).y, sensor_frame_x, sensor_frame_y);
+
+                // Convert the sensor frame point into the target frame
+                sensorToTarget(sensor_frame_x, sensor_frame_y, target_frame_x, target_frame_y);
+
+                if ((prior_points_x.size() < point_count) && (prior_points_y.size() < point_count)) {
+                    num_of_points_in_filter++;
+                } else {
+                    prior_points_x.erase(prior_points_x.begin());
+                    prior_points_y.erase(prior_points_y.begin());
+                }
+
+                prior_points_x.push_back(target_frame_x);
+                prior_points_y.push_back(target_frame_y);
+                double sum_x = target_point.x;
+                double sum_y = target_point.y;
+                for(int k=0; k<prior_points_x.size();k++){
+                    sum_x += prior_points_x[k];
+                    sum_y += prior_points_y[k];
+                }
+                double mean_x = sum_x/num_of_points_in_filter;
+                double mean_y = sum_y/num_of_points_in_filter;
+                double point_var_x = 0;
+                double point_var_y = 0;
+                for(int k =0; k<prior_points_x.size(); k++){
+                    point_var_x += (prior_points_x[k]-mean_x)*(prior_points_x[k]-mean_x);
+                    point_var_y += (prior_points_y[k]-mean_y)*(prior_points_y[k]-mean_y);
+                }
+                point_var_x /= num_of_points_in_filter;
+                point_var_y /= num_of_points_in_filter;
+
+                // Calculate    new target point x value and sigma
+                /*
+                target_point.x = (sigma_squared_x*sensor_frame_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+
+                // Calculate new target point y value
+                target_point.y = (sigma_squared_y*sensor_frame_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+                */
+                sigma_squared_x = 1;
+                sigma_squared_y = 1;
+                target_point.x = (sigma_squared_x*mean_x + point_var_x*target_point.x) / (sigma_squared_x+point_var_x);
+                //sigma_squared_x = (point_var_x*sigma_squared_x) / (point_var_x + sigma_squared_x);
+
+                // Calculate new target point y value
+                target_point.y = (sigma_squared_y*mean_y + point_var_y*target_point.y) / (sigma_squared_y+point_var_y);
+                //sigma_squared_y = (point_var_y*sigma_squared_y) / (point_var_y+ sigma_squared_y);
+
+                intervalStartTime = getWallTime();
+                interval_count++;
+
+                geometry_msgs::PointStamped cylinder_point;
+                cylinder_point.header = msg.header;
+                cylinder_point.header.frame_id = target_frame.c_str();
+                cylinder_point.point.x = target_point.x;
+                cylinder_point.point.y = target_point.y;
+                cylinder_point.point.z = 0;
+                cyl_pub.publish(cylinder_point);
+
+                visualization_msgs::MarkerArray cyl_markers;
+                // Delete previous markers
+                visualization_msgs::Marker delete_markers;
+                delete_markers.action = visualization_msgs::Marker::DELETEALL;
+                cyl_markers.markers.push_back(delete_markers);
+                // DEBUG: Show cylinder marker
+                // imageToSensor(target_point.x, target_point.y, sensor_frame_x, sensor_frame_y);
+                visualization_msgs::Marker cyl_marker;
+                cyl_marker.header = msg.header;
+                cyl_marker.header.frame_id = target_frame.c_str();
+                cyl_marker.id = 1;
+                cyl_marker.type = visualization_msgs::Marker::CYLINDER;
+                cyl_marker.pose.position.x = target_point.x;
+                cyl_marker.pose.position.y = target_point.y;
+                cyl_marker.pose.position.z = 0;
+                cyl_marker.pose.orientation.x = 0;
+                cyl_marker.pose.orientation.y = 0;
+                cyl_marker.pose.orientation.z = 0;
+                cyl_marker.pose.orientation.w = 1.0;
+                cyl_marker.scale.x = 0.75*(2*circle_radius);
+                cyl_marker.scale.y = 0.75*(2*circle_radius);
+                cyl_marker.scale.z = 1.0;
+                cyl_marker.color.a = 1.0;
+                cyl_marker.color.r = 1.0;
+                cyl_marker.color.g = 1.0;
+                cyl_marker.color.b = 1.0;
+                cyl_marker.lifetime = ros::Duration(1/100);
+                cyl_markers.markers.push_back(cyl_marker);
+                marker_pub.publish(cyl_markers);
+            }
+            else {
+                mahalanobisDistanceThreshold *= 2;
+            }
+        }
         //==================================//
 
-        //===== Convert Point Back to Sensor Frame and Publish =====//
-        float sensor_frame_x;
-        float sensor_frame_y;
+        else {
+            //===== Convert Point Back to Sensor Frame and Publish =====//
+            float sensor_frame_x;
+            float sensor_frame_y;
 
-        if (!potentials.empty()) {
-            imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
-            geometry_msgs::PointStamped cylinder_point;
-            cylinder_point.header = msg.header;
-            cylinder_point.header.frame_id = sensor_frame.c_str();
-            cylinder_point.point.x = sensor_frame_x;
-            cylinder_point.point.y = sensor_frame_y;
-            cylinder_point.point.z = 0;
-            cyl_pub.publish(cylinder_point);
+            if (!potentials.empty()) {
+                imageToSensor(potentials.at(0).x, potentials.at(0).y, sensor_frame_x, sensor_frame_y);
+                geometry_msgs::PointStamped cylinder_point;
+                cylinder_point.header = msg.header;
+                cylinder_point.header.frame_id = sensor_frame.c_str();
+                cylinder_point.point.x = sensor_frame_x;
+                cylinder_point.point.y = sensor_frame_y;
+                cylinder_point.point.z = 0;
+                cyl_pub.publish(cylinder_point);
+            }
+
+            // Create a marker for cylinder visualization in RVIZ
+            visualization_msgs::MarkerArray cyl_markers;
+            // Delete previous markers
+            visualization_msgs::Marker delete_markers;
+            delete_markers.action = visualization_msgs::Marker::DELETEALL;
+            cyl_markers.markers.push_back(delete_markers);
+            for (int i = 0; i < potentials.size(); ++i) {
+                // DEBUG: Show cylinder marker
+                imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
+                visualization_msgs::Marker cyl_marker;
+                cyl_marker.header = msg.header;
+                cyl_marker.header.frame_id = sensor_frame.c_str();
+                cyl_marker.id = i+1;
+                cyl_marker.type = visualization_msgs::Marker::CYLINDER;
+                cyl_marker.pose.position.x = sensor_frame_x;
+                cyl_marker.pose.position.y = sensor_frame_y;
+                cyl_marker.pose.position.z = 0;
+                cyl_marker.pose.orientation.x = 0;
+                cyl_marker.pose.orientation.y = 0;
+                cyl_marker.pose.orientation.z = 0;
+                cyl_marker.pose.orientation.w = 1.0;
+                cyl_marker.scale.x = 0.75*(2*circle_radius);
+                cyl_marker.scale.y = 0.75*(2*circle_radius);
+                cyl_marker.scale.z = 1.0;
+                cyl_marker.color.a = 1.0;
+                cyl_marker.color.r = 1.0;
+                cyl_marker.color.g = 1.0;
+                cyl_marker.color.b = 1.0;
+                cyl_marker.lifetime = ros::Duration(1/100);
+                cyl_markers.markers.push_back(cyl_marker);
+            }
+
+            marker_pub.publish(cyl_markers);
+            //==========================================================//
         }
-
-        // Create a marker for cylinder visualization in RVIZ
-        visualization_msgs::MarkerArray cyl_markers;
-        // Delete previous markers
-        visualization_msgs::Marker delete_markers;
-        delete_markers.action = visualization_msgs::Marker::DELETEALL;
-        cyl_markers.markers.push_back(delete_markers);
-        for (int i = 0; i < potentials.size(); ++i) {
-            // DEBUG: Show cylinder marker
-            imageToSensor(potentials.at(i).x, potentials.at(i).y, sensor_frame_x, sensor_frame_y);
-            visualization_msgs::Marker cyl_marker;
-            cyl_marker.header = msg.header;
-            cyl_marker.header.frame_id = sensor_frame.c_str();
-            cyl_marker.id = i+1;
-            cyl_marker.type = visualization_msgs::Marker::CYLINDER;
-            cyl_marker.pose.position.x = sensor_frame_x;
-            cyl_marker.pose.position.y = sensor_frame_y;
-            cyl_marker.pose.position.z = 0;
-            cyl_marker.pose.orientation.x = 0;
-            cyl_marker.pose.orientation.y = 0;
-            cyl_marker.pose.orientation.z = 0;
-            cyl_marker.pose.orientation.w = 1.0;
-            cyl_marker.scale.x = 0.75*(2*circle_radius);
-            cyl_marker.scale.y = 0.75*(2*circle_radius);
-            cyl_marker.scale.z = 1.0;
-            cyl_marker.color.a = 1.0;
-            cyl_marker.color.r = 1.0;
-            cyl_marker.color.g = 1.0;
-            cyl_marker.color.b = 1.0;
-            cyl_marker.lifetime = ros::Duration(1/100);
-            cyl_markers.markers.push_back(cyl_marker);
-        }
-
-        marker_pub.publish(cyl_markers);
-        //==========================================================//
     }
 
     void rosMsgToPCL(const sensor_msgs::PointCloud2& msg, pcl::PointCloud<PointT>::Ptr cloud)
