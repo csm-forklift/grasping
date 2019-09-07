@@ -661,8 +661,8 @@ public:
                 cyl_marker.pose.orientation.y = 0;
                 cyl_marker.pose.orientation.z = 0;
                 cyl_marker.pose.orientation.w = 1.0;
-                cyl_marker.scale.x = 0.75*(2*circle_radius);
-                cyl_marker.scale.y = 0.75*(2*circle_radius);
+                cyl_marker.scale.x = 0.95*(2*circle_radius);
+                cyl_marker.scale.y = 0.95*(2*circle_radius);
                 cyl_marker.scale.z = 1.0;
                 cyl_marker.color.a = 1.0;
                 cyl_marker.color.r = 1.0;
