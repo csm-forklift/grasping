@@ -42,7 +42,7 @@
     </node>
 
     <!-- Clamp Controller -->
-    <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
+    <node pkg="grasping" name="clamp_control" type="clamp_control">
         <param name="clamp_scale_movement_up" value="$(arg clamp_scale_movement_up)"/>
         <param name="clamp_scale_movement_down" value="$(arg clamp_scale_movement_down)"/>
         <param name="clamp_scale_grasp" value="$(arg clamp_scale_grasp)"/>
@@ -60,7 +60,7 @@
         <param name="grasp_angle" value="$(arg grasp_angle)"/>
         <param name="angle_tolerance" value="$(arg angle_tolerance)"/>
         <param name="K_angle" value="$(arg K_angle)"/>
-        <param name="K_linear" value="1$(arg K_linear)"/>
+        <param name="K_linear" value="$(arg K_linear)"/>
         <param name="max_velocity" value="$(arg max_velocity)"/>
         <param name="grasp_plate_offset_x" value="$(arg grasp_plate_offset_x)"/>
         <param name="grasp_plate_offset_y" value="$(arg grasp_plate_offset_y)"/>

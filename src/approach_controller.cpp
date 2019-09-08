@@ -126,6 +126,10 @@ public:
         nh_.param("autonomous_deadman", autonomous_deadman_button, 5);
         nh_.param("timeout", timeout, 1.0);
 
+        // Print Parameters
+        cout << "[" << ros::this_node::getName() << "]: Using linear Kp of " << proportional_control_linear << '\n';
+
+
         // Create publishers and subscribers
         control_mode_sub = nh_.subscribe("/control_mode", 1, &ApproachController::controlModeCallback, this);
         stretch_sensor_sub = nh_.subscribe("/clamp_control/clamp_plate_status", 1, &ApproachController::plateCheckCallback, this);
@@ -212,6 +216,22 @@ public:
 
     void setInitialAngle()
     {
+        // Get pose of base_link on the forklift
+        getForkliftPose();
+
+        // Calculate forklift's new target position in the odom frame
+        tf::TransformListener listener;
+        tf::StampedTransform transform;
+        listener.waitForTransform("/odom", "/clamp_short_arm", ros::Time(0), ros::Duration(1.0));
+        listener.lookupTransform("/odom", "/clamp_short_arm", ros::Time(0), transform);
+        double plate_x = transform.getOrigin().x();
+        double plate_y = transform.getOrigin().y();
+        forklift_target_x = plate_x + roll_radius*cos(grasp_angle + forklift_heading);
+        forklift_target_y = plate_y + roll_radius*sin(grasp_angle + forklift_heading);
+
+        // DEBUG: check angle reading
+        cout << "[initial angle]: roll: (" << paperRoll_x << ", " << paperRoll_y << ") Forklift: (" << forklift_target_x << ", " << forklift_target_y << ")\n";
+
         // Calculate initial steering angle
         theta_desired = atan2(paperRoll_y-forklift_target_y, paperRoll_x-forklift_target_x);
         steering_angle = -proportional_control_angle * (theta_desired - forklift_heading);
@@ -292,7 +312,7 @@ public:
                     // Change gear to reverse
 
                     steering_angle = -steering_angle;
-                    linear_velocity = linear_velocity*5*proportional_control_linear;
+                    linear_velocity = -max_velocity;
 
                     // Set forklift velocity
                     // Bound movement velocity
@@ -307,15 +327,16 @@ public:
                     // Set forklift velocity
                     // Bound movement velocity
                     movement_velocity = min(linear_velocity, max_velocity);
+                    movement_velocity = max(movement_velocity, 0.01);
                     gear = 1;
                 }
             }
             else{
                 std::cout << "[" << ros::this_node::getName() << "]: approach tolerance reached.\n";
-                linear_velocity = 0;
+                //linear_velocity = 0;
 
                 // Wait 2 seconds for the stretch sensor to register
-                ros::Duration(2.0).sleep();
+                //ros::Duration(2.0).sleep();
 
                 ros::spinOnce();
 
@@ -326,8 +347,15 @@ public:
 
                 // Set forklift velocity
                 // Bound movement velocity
-                movement_velocity = min(linear_velocity, max_velocity);
-                gear = 0;
+                //movement_velocity = min(linear_velocity, max_velocity);
+                //gear = 0;
+                movement_velocity = linear_velocity;
+                if (movement_velocity < 0) {
+                    gear = -1;
+                }
+                else {
+                    gear = 1;
+                }
             }
 
 /*
@@ -356,11 +384,10 @@ public:
             publishMessages();
 
             // DEBUG:
-            printf("D: %0.03f, Steer: %0.03f, Theta: %0.03f, Angle: %0.03f, error: %0.03f, plate: %d, vel: %0.03e\n", approach_distance, steering_angle, theta_desired, forklift_heading, theta_error, plate_contact, movement_velocity);
+            printf("D: %0.03f, Steer: %0.03f, error: %0.03f, plate: %d, vel: %0.03g, Kp: %0.03g\n", approach_distance, steering_angle, theta_error, plate_contact, movement_velocity, proportional_control_linear);
 
             // Update states
             ros::spinOnce();
-            ros::Duration(0.05).sleep();
 
             // Break the loop if the operation mode changes
             if (operation_mode != 1) {
@@ -389,6 +416,7 @@ public:
         // First wait for the system to reach a steering angle of 0
         steering_angle = 0;
         movement_velocity = 0;
+        gear = -1;
         while (abs(current_steering_angle-steering_angle) > angle_tolerance && ros::ok()) {
             // Publish the new steering angle and velocity
             cout << "Backout - Current steering angle: " << current_steering_angle << ", Steering angle command: " << steering_angle << "\n";
@@ -403,8 +431,24 @@ public:
         }
 
         while (approach_distance < backout_distance && ros::ok()) {
+            // Get pose of base_link on the forklift
+            getForkliftPose();
+
+            // Calculate forklift's new target position in the odom frame
+            tf::TransformListener listener;
+            tf::StampedTransform transform;
+            listener.waitForTransform("/odom", "/clamp_short_arm", ros::Time(0), ros::Duration(1.0));
+            listener.lookupTransform("/odom", "/clamp_short_arm", ros::Time(0), transform);
+            double plate_x = transform.getOrigin().x();
+            double plate_y = transform.getOrigin().y();
+            forklift_target_x = plate_x + roll_radius*cos(grasp_angle + forklift_heading);
+            forklift_target_y = plate_y + roll_radius*sin(grasp_angle + forklift_heading);
+            
             // Update approach distance
             approach_distance = sqrt(pow(forklift_target_y-paperRoll_y,2)+pow(forklift_target_x-paperRoll_x,2));
+            
+            // DEBUG: print approach distance
+            cout << "[Backing out]: Approach distance: " << approach_distance << ", backout distance: " << backout_distance << '\n';
 
             // Set backup velocity
             movement_velocity = -max_velocity;

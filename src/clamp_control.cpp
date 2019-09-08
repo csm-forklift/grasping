@@ -313,31 +313,23 @@ void ClampControl::check_grasp()
         grasp_status_pub.publish(grasp_status_msg);
 		operation_mode = 4;
 	}
-    else if ((clamp_plate_status == true) && (limit_close == true))
+    else if ((limit_close == true) && (force < force_threshold))
     {
-        grasp_status = true;
+        std::cout << "Failed Grasp: Clamp closed, but force threshold not reached. Reopening clamp.\n";
+        grasp_status = false;
         std_msgs::Bool grasp_status_msg;
         grasp_status_msg.data = grasp_status;
         grasp_status_pub.publish(grasp_status_msg);
-        operation_mode = 4;
+        operation_mode = 1;
     }
     else if (clamp_plate_status == false && force >= force_threshold) {
-        std::cout << "Failed grasp. Force reached but plate is not in position.\n";
+        std::cout << "Failed Grasp: Force reached but plate is not in position.\n";
         grasp_status = false;
         std_msgs::Bool grasp_status_msg;
         grasp_status_msg.data - grasp_status;
         grasp_status_pub.publish(grasp_status_msg);
         operation_mode = 1;
     }
-	else if ((clamp_plate_status == false) && (limit_close == true) && (force < force_threshold))
-	{
-        std::cout << "Clamp broken: " << clamp_plate_status << "\n";
-		grasp_status = false;
-        std_msgs::Bool grasp_status_msg;
-        grasp_status_msg.data = grasp_status;
-        grasp_status_pub.publish(grasp_status_msg);
-		operation_mode = 1;
-	}
 }
 
 void ClampControl::raise_clamp() {
