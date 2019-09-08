@@ -36,6 +36,8 @@ private:
 	ros::Publisher clamp_plate_status_pub;
 	ros::Publisher grasp_status_pub;
     ros::Publisher grasp_finished_pub;
+    ros::Publisher drop_status_pub;
+    ros::Publisher drop_finished_pub;
 
 	bool limit_up;
 	bool limit_down;
@@ -47,7 +49,9 @@ private:
 	float stretch;
     float stretch_threshold;
 	int control_mode;
-    std::vector<int> available_control_modes; // vector of possible values for turing on this controller
+    int current_operation; // 0 = pick, 1 = drop
+    std::vector<int> available_control_modes_pick; // vector of possible values for turing on this controller for pick operation
+    std::vector<int> available_control_modes_drop; // vector of possible values for turing on this controller for drop operation
 
     double clamp_scale_movement_up; // adjusts value sent to the arduino for clamp raising, range: [0, 1]
     double clamp_scale_movement_up_high; // speed used for the fast portion of the velocity profile
@@ -98,6 +102,8 @@ public:
 		clamp_plate_status_pub = nh_.advertise<std_msgs::Bool>("clamp_plate_status", 1);
 		grasp_status_pub = nh_.advertise<std_msgs::Bool>("grasp_status", 1, true);
         grasp_finished_pub = nh_.advertise<std_msgs::Bool>("grasp_finished", 1, true); // latched, meaning it waits for subscribers to send a message
+        drop_status_pub = nh_.advertise<std_msgs::Bool>("drop_status", 1, true);
+        drop_finished_pub = nh_.advertise<std_msgs::Bool>("drop_finished", 1, true);
 
 		// to be subscribed to the controller for operation
 		control_mode_sub = nh.subscribe<std_msgs::Int8> ("/control_mode", 1, &ClampControl::controlModeCallback, this);
@@ -114,22 +120,23 @@ public:
         //signal(SIGINT, ClampControl::shutdownHandler);
 
         // Initialize States
+        current_operation = 0; // start with pick operation
 		operation_mode = 0; // starting with lowering clamp
         force = 0;
         force_threshold = 800;
         stretch = 0;
         stretch_threshold = 17.0;
 
-        //===== Print out possible values for control mode =====//
+        //===== Print out possible values for pick control mode =====//
         // Pushback more numbers to allow this controller to operate in more
         // modes
-        available_control_modes.push_back(3);
-        std::string message = "Available control_modes for [" + ros::this_node::getName() + "]: ";
-        for (int i = 0; i < available_control_modes.size(); ++i) {
+        available_control_modes_pick.push_back(3);
+        std::string message = "Available pick control_modes for [" + ros::this_node::getName() + "]: ";
+        for (int i = 0; i < available_control_modes_pick.size(); ++i) {
             char msg_buffer[10]; // increase size if more digits are needed
-            sprintf(msg_buffer, "%d", available_control_modes.at(i));
+            sprintf(msg_buffer, "%d", available_control_modes_pick.at(i));
             message += msg_buffer;
-            if (i != available_control_modes.size() - 1) {
+            if (i != available_control_modes_pick.size() - 1) {
                 message += ", ";
             }
             else {
@@ -137,6 +144,24 @@ public:
             }
         }
         ROS_INFO("%s", message.c_str());
+
+        //===== Print out possible values for drop control mode =====//
+        // Pushback more numbers to allow this controller to operate in more
+        // modes
+        available_control_modes_drop.push_back(5);
+        std::string message2 = "Available drop control_modes for [" + ros::this_node::getName() + "]: ";
+        for (int i = 0; i < available_control_modes_drop.size(); ++i) {
+            char msg_buffer[10]; // increase size if more digits are needed
+            sprintf(msg_buffer, "%d", available_control_modes_drop.at(i));
+            message2 += msg_buffer;
+            if (i != available_control_modes_drop.size() - 1) {
+                message2 += ", ";
+            }
+            else {
+                message2 += '\n';
+            }
+        }
+        ROS_INFO("%s", message2.c_str());
 
         // Initialize joystick variables
         timeout_start = getWallTime();
@@ -341,7 +366,12 @@ void ClampControl::raise_clamp() {
 	else
 	{
 		clamp_movement = 0.0;
-        operation_mode = 5;
+        if (current_operation == 0) {
+            operation_mode = 5;
+        }
+        else {
+            operation_mode = 4;
+        }
 	}
 }
 
@@ -368,13 +398,18 @@ double getWallTime() {
 
 void ClampControl::controller()
 {
-    if (checkControlMode(control_mode, available_control_modes)) {
+    // Pick Operation
+    if (checkControlMode(control_mode, available_control_modes_pick)) {
+        if (current_operation == 1) {
+            current_operation = 0;
+            operation_mode = 0;
+        }
         // DEBUG:
         std::cout << "Operating mode: " << operation_mode << "\n";
 
         /* Operating Modes
          * 0 = Lowering the clamp
-         * 1 = Opneing the clamp
+         * 1 = Opening the clamp
          * 2 = Begin approach and wait for stretch sensor
          * 3 = Close the clamp and check force sensor for grasp
          * 4 = Raise the clamp
@@ -454,6 +489,76 @@ void ClampControl::controller()
         plate_check();
         clamp_plate_status_msg.data = clamp_plate_status;
         clamp_plate_status_pub.publish(clamp_plate_status_msg);
+    }
+
+    // Drop Operation
+    if (checkControlMode(control_mode, available_control_modes_drop)) {
+        if (current_operation == 0) {
+            current_operation = 1;
+            operation_mode = 0;
+        }
+        // DEBUG:
+        std::cout << "Operating mode: " << operation_mode << "\n";
+
+        /* Operating Modes
+         * 0 = Lowering the clamp
+         * 1 = Opening the clamp
+         * 2 = Publish success status
+         * 3 = Raise the clamp
+         * 4 = Indicate whether the drop was successful
+         */
+
+        if (operation_mode == 0)
+     	{
+            std::cout << "Lowering\n";
+     		lower_clamp();
+     	}
+     	if (operation_mode == 1)
+     	{
+            std::cout << "Opening\n";
+     		open_clamp();
+     	}
+     	if (operation_mode == 2)
+     	{
+            std_msgs::Bool drop_status_msg;
+            drop_status_msg.data = true;
+            drop_status_pub.publish(drop_status_msg);
+            operation_mode = 3;
+     	}
+     	if (operation_mode == 3)
+     	{
+            std::cout << "Raising\n";
+            raise_clamp();
+     	}
+        if (operation_mode == 4) {
+            std::cout << "Drop successful!\n";
+            std_msgs::Bool drop_finished_msg;
+            drop_finished_msg.data = true;
+            drop_finished_pub.publish(drop_finished_msg);
+        }
+
+
+        std_msgs::Float32 clamp_movement_msg;
+     	std_msgs::Float32 clamp_grasp_msg;
+     	std_msgs::Bool clamp_plate_status_msg;
+
+        if (manual_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send no command
+        }
+        else if (autonomous_deadman_on and ((getWallTime() - timeout_start) < timeout)) {
+            // Send clamp control commands
+            clamp_movement_msg.data = clamp_movement;
+            clamp_grasp_msg.data = clamp_grasp;
+            clamp_movement_pub.publish(clamp_movement_msg);
+         	clamp_grasp_pub.publish(clamp_grasp_msg);
+        }
+        else {
+            // Joystick has timed out, send 0 velocity commands for clamp
+            clamp_movement_msg.data = 0;
+         	clamp_grasp_msg.data = 0;
+            clamp_movement_pub.publish(clamp_movement_msg);
+            clamp_grasp_pub.publish(clamp_grasp_msg);
+        }
     }
 }
 
