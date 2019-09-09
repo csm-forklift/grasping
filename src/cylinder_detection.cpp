@@ -551,7 +551,8 @@ public:
             // targetFilter(): deletes points outside 'target_tolerance' and returns the points sorted by distance from target
             // closestToTarget(): will only return the single closest point within range (otherwise no points returned)
             if (use_location_filter) {
-                targetFilter(potentials, target_point);
+                closestToTarget(potentials, target_point);
+                //targetFilter(potentials, target_point);
             }
             //cout<<"Number of Points after filtering: " <<potentials.size() <<'\n';
             //cout << '\n';
