@@ -2,8 +2,9 @@
  * Functions used to perform the image processing for the Hough Transform.
  */
 
+#include <cylinder_detection/cylinder_detection.hpp>
 
-cv::Mat generateFixedImage(cv::Mat &image, int &x_offset_pixels, int &y_offset_pixels)
+cv::Mat CylinderDetector::generateFixedImage(cv::Mat &image, int &x_offset_pixels, int &y_offset_pixels)
 {
     // Find the fixed range, pixels, and offset
     float x_fixed_range = max_fixed_x - min_fixed_x;
@@ -111,48 +112,113 @@ cv::Mat generateFixedImage(cv::Mat &image, int &x_offset_pixels, int &y_offset_p
         image(y_rel_indices, x_rel_indices).copyTo(subrange);
     }
 
-    // // DEBUG: Check indices and offsets
-    // std::cout << "===== Matrix Info =====\n";
-    // std::cout << "Total points seen: " << scene_cloud->points.size() << "\n";
-    // std::cout << "Relative Image: (" << top_image.cols << ", " << top_image.rows << ")\n";
-    // std::cout << "width: " << x_pixels << "\n";
-    // std::cout << "height: " << y_pixels << "\n";
-    // std::cout << "\nFixed Image: (" << top_image_fixed.cols << ", " << top_image_fixed.rows << ")\n";
-    // std::cout << "width: " << x_fixed_pixels << "\n";
-    // std::cout << "height: " << y_fixed_pixels << "\n";
-    // std::cout << "=======================\n";
-    // std::cout << std::endl;
-    // std::cout << "===== Offset Info =====\n";
-    // std::cout << "Relative position: \n";
-    // std::cout << "(x,y): (" << x_max << ", " << y_max << ")\n";
-    // std::cout << "Fixed position: \n";
-    // std::cout << "(x,y): (" << max_fixed_x << ", " << max_fixed_y << ")\n";
-    // std::cout << "Offset (pixels): (" << x_offset_pixels << ", " << y_offset_pixels << ")\n";
-    // std::cout << "=======================\n";
-    // std::cout << std::endl;
-    // std::cout << "===== Range Info =====\n";
-    // std::cout << "State: \n";
-    // std::cout << "rel_origin_x: " << rel_origin_x << "\n";
-    // std::cout << "rel_origin_y: " << rel_origin_y << "\n";
-    // std::cout << "rel_max_x: " << rel_max_x << "\n";
-    // std::cout << "rel_max_y: " << rel_max_y << "\n";
-    // std::cout << "Relative: \n";
-    // std::cout << "x start: " << x_lb_rel << "\n";
-    // std::cout << "x end: " << x_ub_rel << "\n";
-    // std::cout << "y start: " << y_lb_rel << "\n";
-    // std::cout << "y end: " << y_ub_rel << "\n";
-    // std::cout << "Fixed: \n";
-    // std::cout << "x start: " << x_lb_fixed << "\n";
-    // std::cout << "x end: " << x_ub_fixed << "\n";
-    // std::cout << "y start: " << y_lb_fixed << "\n";
-    // std::cout << "y end: " << y_ub_fixed << "\n";
-    // std::cout << "======================\n";
-    // std::cout << std::endl;
-
     return image_fixed;
 }
 
-void generateAccumulatorUsingImage(cv::Mat &image, cv::Mat &accumulator)
+void CylinderDetector::midpointCircleAlgorithm(std::vector<cv::Point2i> &points, int radius, int x_center, int y_center)
+{
+    // Performs the Midpoint Circle Algorithm
+    // For equation references see:
+    // https://www.geeksforgeeks.org/mid-point-circle-drawing-algorithm/
+    // https://en.wikipedia.org/wiki/Midpoint_circle_algorithm
+
+    // Center point, used to translate points to shift the circle so it is centered around a desired point
+    cv::Point2i center_point(x_center, y_center);
+
+    // Initial point
+    int x = radius, y = 0;
+    cv::Point2i point(x,y);
+    points.push_back(point + center_point);
+
+    // If radius is >0 print mirrored point at four "corners" of the circle
+    if (radius > 0) {
+        // Going in counter-clockwise order
+        point.x = y;
+        point.y = x;
+        points.push_back(point + center_point);
+        point.x = -x;
+        point.y = y;
+        points.push_back(point + center_point);
+        point.x = y;
+        point.y = -x;
+        points.push_back(point + center_point);
+    }
+
+    // Determine whether to decrement x or not
+    int radius_error = 1 - radius;
+    while (x > y) {
+        y++;
+
+        //----- Update the radius error for next point comparison
+        // Midpoint is inside or on perimeter
+        if (radius_error <= 0) {
+            radius_error = radius_error + 2*y + 1;
+        }
+        // Midpoint is outside of the perimeter
+        else {
+            x--;
+            radius_error = radius_error + 2*y - 2*x + 1;
+        }
+
+        // Check if all points have been generated
+        if (x < y) {
+            break;
+        }
+
+        // Generate first set of octant points
+        point.x = x;
+        point.y = y;
+        points.push_back(point + center_point);
+        point.x = -x;
+        point.y = y;
+        points.push_back(point + center_point);
+        point.x = x;
+        point.y = -y;
+        points.push_back(point + center_point);
+        point.x = -x;
+        point.y = -y;
+        points.push_back(point + center_point);
+
+        // If x != y then generate the other half of the octant points. (if they are equal there will be overlap if these points are used)
+        if (x != y) {
+            point.x = y;
+            point.y = x;
+            points.push_back(point + center_point);
+            point.x = -y;
+            point.y = x;
+            points.push_back(point + center_point);
+            point.x = y;
+            point.y = -x;
+            points.push_back(point + center_point);
+            point.x = -y;
+            point.y = -x;
+            points.push_back(point + center_point);
+        }
+    }
+}
+
+void CylinderDetector::trigCircleGeneration(std::vector<cv::Point2i> &points, int radius, double resolution, int x_center, int y_center)
+{
+    // Center point, used to translate points to shift the circle so it is centered around a desired point
+    cv::Point2i center_point(x_center, y_center);
+
+    double theta = 0.0; // current angle around the circle
+    while (theta < 2*M_PI) {
+        // Calculate the (x,y) position along the circle in the image frame
+        int x = round(radius_pixels*cos(theta));
+        int y = round(radius_pixels*sin(theta));
+        cv::Point2i point(x, y);
+        points.push_back(point + center_point);
+        theta += resolution;
+    }
+}
+
+double CylinderDetector::calculateRadius(double x, double y, double x_c, double y_c)
+{
+    return sqrt(pow(x - x_c, 2) + pow(y - y_c, 2));
+}
+
+void CylinderDetector::generateAccumulatorUsingImage(cv::Mat &image, cv::Mat &accumulator)
 {
     // Iterate through each point in the image (the image should be of type 'CV_8U', if not change the template type from 'uint8_t' to whatever type matches the matrix image type), for each point that is not 0 create a circle and increment the pixel values in the accumulator along that circle.
     int num_rows = image.rows;
@@ -182,161 +248,157 @@ void generateAccumulatorUsingImage(cv::Mat &image, cv::Mat &accumulator)
     }
 }
 
- // FIXME: currently left in here to test it's speed against the new methods
- void generateAccumulatorUsingImage_OldMethod(cv::Mat &top_image_accum, cv::Mat accumulator)
- {
-     int num_rows = top_image_accum.rows;
-     int num_cols = top_image_accum.cols;
+// FIXME: currently left in here to test it's speed against the new methods
+void CylinderDetector::generateAccumulatorUsingImage_OldMethod(cv::Mat &top_image_accum, cv::Mat accumulator)
+{
+    int num_rows = top_image_accum.rows;
+    int num_cols = top_image_accum.cols;
 
-     for (int i = 0; i < num_rows; ++i) {
-         for (int j = 0; j < num_cols; ++j) {
-             if (!(top_image_accum.at<uint8_t>(i,j) == 0)) {
-                 // Increment around a circle by rotation_resolution
-                 double theta = 0.0; /// current angle around the circle
-                 while (theta < 2*M_PI) {
-                     // Calculate the (x,y) position along the circle in the image frame
-                     int a = j - radius_pixels*cos(theta);
-                     int b = i - radius_pixels*sin(theta);
-                     // Convert circle poinst from image index to accumulator index
-                     int accum_x;
-                     int accum_y;
-                     imageToAccumulator(a, b, accum_x, accum_y);
-                     accumulator.at<uint16_t>(cv::Point(accum_x, accum_y)) += 1; // type must match matrix type CV_16U = uint16_t
-                     theta += rotation_resolution;
-                 }
-             }
-         }
-     }
- }
+    for (int i = 0; i < num_rows; ++i) {
+        for (int j = 0; j < num_cols; ++j) {
+            if (!(top_image_accum.at<uint8_t>(i,j) == 0)) {
+                // Increment around a circle by rotation_resolution
+                double theta = 0.0; /// current angle around the circle
+                while (theta < 2*M_PI) {
+                    // Calculate the (x,y) position along the circle in the image frame
+                    int a = j - radius_pixels*cos(theta);
+                    int b = i - radius_pixels*sin(theta);
+                    // Convert circle poinst from image index to accumulator index
+                    int accum_x;
+                    int accum_y;
+                    imageToAccumulator(a, b, accum_x, accum_y);
+                    accumulator.at<uint16_t>(cv::Point(accum_x, accum_y)) += 1; // type must match matrix type CV_16U = uint16_t
+                    theta += rotation_resolution;
+                }
+            }
+        }
+    }
+}
 
- void imageToSensor(int image_x_in, int image_y_in, float& sensor_x_out, float& sensor_y_out)
- {
-     // Calculate the x position
-     int y_index_flipped = (y_pixels - 1) - image_y_in;
-     sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
+void CylinderDetector::sensorToImage(float sensor_x_in, float sensor_y_in, int& image_x_out, int& image_y_out)
+{
+    // Calculate the x index
+    float y_mirror = -sensor_y_in;
+    float y_translated = y_mirror - y_mirror_min;
+    image_x_out = trunc(y_translated/x_pixel_delta);
 
-     // Calculate the y position
-     float y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
-     float y_mirror = y_translated + y_mirror_min;
-     sensor_y_out = -y_mirror;
- }
+    // Calculate the y index
+    int y_index_flipped = trunc(sensor_x_in/y_pixel_delta); // target frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
+    image_y_out = (y_pixels - 1) - y_index_flipped;
+}
 
- // Overloaded function to handle 'double' inputs
- void sensorToImage(double& sensor_x_in, double& sensor_y_in, int& image_x_out, int& image_y_out)
- {
-     // Calculate the x index
-     double y_mirror = -sensor_y_in;
-     double y_translated = y_mirror - y_mirror_min;
-     image_x_out = trunc(y_translated/x_pixel_delta);
+void CylinderDetector::imageToSensor(int image_x_in, int image_y_in, float& sensor_x_out, float& sensor_y_out)
+{
+    // Calculate the x position
+    int y_index_flipped = (y_pixels - 1) - image_y_in;
+    sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
 
-     // Calculate the y index
-     int y_index_flipped = trunc(sensor_x_in/y_pixel_delta); // sensor frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
-     image_y_out = (y_pixels - 1) - y_index_flipped;
- }
- // Overloaded function to handle 'double' inputs
- void imageToSensor(int image_x_in, int image_y_in, double& sensor_x_out, double& sensor_y_out)
- {
-     // Calculate the x position
-     int y_index_flipped = (y_pixels - 1) - image_y_in;
-     sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
+    // Calculate the y position
+    float y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
+    float y_mirror = y_translated + y_mirror_min;
+    sensor_y_out = -y_mirror;
+}
 
-     // Calculate the y position
-     double y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
-     double y_mirror = y_translated + y_mirror_min;
-     sensor_y_out = -y_mirror;
- }
+// Overloaded function to handle 'double' inputs
+void CylinderDetector::sensorToImage(double& sensor_x_in, double& sensor_y_in, int& image_x_out, int& image_y_out)
+{
+    // Calculate the x index
+    double y_mirror = -sensor_y_in;
+    double y_translated = y_mirror - y_mirror_min;
+    image_x_out = trunc(y_translated/x_pixel_delta);
 
- void imageToAccumulator(int image_x_in, int image_y_in, int& accum_x_out, int& accum_y_out)
- {
-     // Calculate the x index
-     accum_x_out = image_x_in + radius_pixels;
+    // Calculate the y index
+    int y_index_flipped = trunc(sensor_x_in/y_pixel_delta); // sensor frame has positive going up, but image frame has positive going down, so find y with positive up first, then flip it
+    image_y_out = (y_pixels - 1) - y_index_flipped;
+}
 
-     // Calculate the y index
-     accum_y_out = image_y_in + radius_pixels;
- }
+// Overloaded function to handle 'double' inputs
+void CylinderDetector::imageToSensor(int image_x_in, int image_y_in, double& sensor_x_out, double& sensor_y_out)
+{
+    // Calculate the x position
+    int y_index_flipped = (y_pixels - 1) - image_y_in;
+    sensor_x_out = (y_index_flipped*y_pixel_delta) + (y_pixel_delta/2); // place at middle of pixel
 
- void accumulatorToImage(int accum_x_in, int accum_y_in, int& image_x_out, int& image_y_out)
- {
-     // Calculate the x index
-     image_x_out = accum_x_in - radius_pixels;
+    // Calculate the y position
+    double y_translated = (image_x_in*x_pixel_delta) + (x_pixel_delta/2); // place at middle of pixel
+    double y_mirror = y_translated + y_mirror_min;
+    sensor_y_out = -y_mirror;
+}
 
-     // Calculate the y index
-     image_y_out = accum_y_in - radius_pixels;
- }
+void CylinderDetector::imageToAccumulator(int image_x_in, int image_y_in, int& accum_x_out, int& accum_y_out)
+{
+    // Calculate the x index
+    accum_x_out = image_x_in + radius_pixels;
 
- void sensorToTarget(double sensor_x_in, double sensor_y_in, double& target_x_out, double& target_y_out)
- {
-     /**
-      * Transforms a sensor (x,y) point to an (x,y) point in the target
-      * frame
-      */
+    // Calculate the y index
+    accum_y_out = image_y_in + radius_pixels;
+}
 
-     // Sensor point
-     geometry_msgs::PointStamped sensor_point;
-     sensor_point.header.frame_id = sensor_frame.c_str();
-     sensor_point.point.x = sensor_x_in;
-     sensor_point.point.y = sensor_y_in;
+void CylinderDetector::accumulatorToImage(int accum_x_in, int accum_y_in, int& image_x_out, int& image_y_out)
+{
+    // Calculate the x index
+    image_x_out = accum_x_in - radius_pixels;
 
-     // Target point
-     geometry_msgs::PointStamped target_point;
+    // Calculate the y index
+    image_y_out = accum_y_in - radius_pixels;
+}
 
-     // Get transform from sensor to target frame
-     tf_listener.waitForTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.051));
-     try {
-         // Transform point
-         tf_listener.transformPoint(target_frame.c_str(), sensor_point, target_point);
-     }
-     catch(tf::TransformException& ex) {
-         ROS_ERROR("Target Transform Exception: %s", ex.what());
-     }
+void CylinderDetector::sensorToTarget(double sensor_x_in, double sensor_y_in, double& target_x_out, double& target_y_out)
+{
+    /**
+     * Transforms a sensor (x,y) point to an (x,y) point in the target
+     * frame
+     */
 
-     // Extract target x and y
-     target_x_out = target_point.point.x;
-     target_y_out = target_point.point.y;
- }
+    // Sensor point
+    geometry_msgs::PointStamped sensor_point;
+    sensor_point.header.frame_id = sensor_frame.c_str();
+    sensor_point.point.x = sensor_x_in;
+    sensor_point.point.y = sensor_y_in;
 
- void targetToSensor(double target_x_in, double target_y_in, double& sensor_x_out, double& sensor_y_out)
- {
-     /**
-      * Transforms a point in the target frame to a the sensor frame
-      */
+    // Target point
+    geometry_msgs::PointStamped target_point;
 
-     // Create ROS PointStamped for tf functions
-     geometry_msgs::PointStamped sensor_point;
-     geometry_msgs::PointStamped target_point;
-     target_point.header.frame_id = target_frame.c_str();
-     target_point.point.x = target_x_in;
-     target_point.point.y = target_y_in;
+    // Get transform from sensor to target frame
+    tf_listener.waitForTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time::now(), ros::Duration(0.051));
+    try {
+        // Transform point
+        tf_listener.transformPoint(target_frame.c_str(), sensor_point, target_point);
+    }
+    catch(tf::TransformException& ex) {
+        ROS_ERROR("Target Transform Exception: %s", ex.what());
+    }
 
-     // Get transform from target to sensor frame
-     tf_listener.waitForTransform(target_frame.c_str(), sensor_frame.c_str(), ros::Time(0), ros::Duration(0.051));
-     tf::StampedTransform transform;
-     try {
-         // Transform point
-         tf_listener.transformPoint(sensor_frame.c_str(), target_point, sensor_point);
+    // Extract target x and y
+    target_x_out = target_point.point.x;
+    target_y_out = target_point.point.y;
+}
 
-         // // DEBUG: check transform
-         // tf_listener.lookupTransform(sensor_frame.c_str(), target_frame.c_str(), ros::Time(0), transform);
-         // std::cout << "Transform from " << transform.frame_id_ << " to " << transform.child_frame_id_ << ":\n";
-         // std::cout << transform.getOrigin()[0] << std::endl;
-         // std::cout << transform.getOrigin()[1] << std::endl;
-         // std::cout << transform.getOrigin()[2] << std::endl;
-         // std::cout << transform.getRotation()[0] << std::endl;
-         // std::cout << transform.getRotation()[1] << std::endl;
-         // std::cout << transform.getRotation()[2] << std::endl;
-         // std::cout << transform.getRotation()[3] << std::endl;
-     }
-     catch(tf::TransformException& ex) {
-         ROS_ERROR("Sensor Transform Exception: %s", ex.what());
-     }
+void CylinderDetector::targetToSensor(double target_x_in, double target_y_in, double& sensor_x_out, double& sensor_y_out)
+{
+    /**
+     * Transforms a point in the target frame to a the sensor frame
+     */
 
-     // Extract (x,y) positions from PointStamped
-     sensor_x_out = sensor_point.point.x;
-     sensor_y_out = sensor_point.point.y;
+    // Create ROS PointStamped for tf functions
+    geometry_msgs::PointStamped sensor_point;
+    geometry_msgs::PointStamped target_point;
+    target_point.header.frame_id = target_frame.c_str();
+    target_point.point.x = target_x_in;
+    target_point.point.y = target_y_in;
 
-     // // DEBUG: check tranform
-     // std::cout << "Target point (" << target_frame << ")\n";
-     // std::cout << "(" << target_x_in << ", " << target_y_in << ")" << std::endl;
-     // std::cout << "Target point (" << sensor_frame << ")\n";
-     // std::cout << "(" << sensor_x_out << ", " << sensor_y_out << ")" << std::endl;
- }
+    // Get transform from target to sensor frame
+    tf_listener.waitForTransform(target_frame.c_str(), sensor_frame.c_str(), ros::Time(0), ros::Duration(0.051));
+    tf::StampedTransform transform;
+    try {
+        // Transform point
+        tf_listener.transformPoint(sensor_frame.c_str(), target_point, sensor_point);
+    }
+    catch(tf::TransformException& ex) {
+        ROS_ERROR("Sensor Transform Exception: %s", ex.what());
+    }
+
+    // Extract (x,y) positions from PointStamped
+    sensor_x_out = sensor_point.point.x;
+    sensor_y_out = sensor_point.point.y;
+}

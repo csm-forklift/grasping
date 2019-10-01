@@ -124,15 +124,16 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
   /usr/include/eigen3/Eigen
 )
 
 ## Declare a C++ library
-# add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/bspline.cpp
-# )
+add_library(cylinderdetection
+  src/image_processing.cpp
+  src/filters.cpp
+)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -147,6 +148,7 @@ add_executable(approach_path src/approach_path.cpp)
 add_executable(test_points src/test_points.cpp)
 add_executable(clamp_switch_node src/clamp_switch_node.cpp)
 add_executable(cylinder_detection src/cylinder_detection.cpp)
+add_executable(cylinder_detection2 src/cylinder_detection2.cpp)
 add_executable(cylinder_detection_demo src/cylinder_detection_demo.cpp)
 add_executable(approach_controller src/approach_controller.cpp)
 add_executable(clamp_control src/clamp_control.cpp)
@@ -171,6 +173,7 @@ target_link_libraries(approach_path ${catkin_LIBRARIES})
 target_link_libraries(test_points ${catkin_LIBRARIES})
 target_link_libraries(clamp_switch_node ${catkin_LIBRARIES})
 target_link_libraries(cylinder_detection ${catkin_LIBRARIES})
+target_link_libraries(cylinder_detection2 ${catkin_LIBRARIES} cylinderdetection)
 target_link_libraries(cylinder_detection_demo ${catkin_LIBRARIES})
 target_link_libraries(approach_controller ${catkin_LIBRARIES})
 target_link_libraries(clamp_control ${catkin_LIBRARIES})
