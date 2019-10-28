@@ -25,6 +25,7 @@ from scipy.optimize import minimize
 import math
 from inPolygon import pointInPolygon
 import time
+from copy import copy, deepcopy
 
 
 class Pose2D:
@@ -85,13 +86,15 @@ class ManeuverPath:
         #=============#
         # ROS Parameters
         rospy.init_node("maneuver_path")
-        self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 6.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
+        self.approach_pose_offset = rospy.get_param("~approach_pose_offset", 8.0) # distance in meters used to offset the maneuver starting pose from the roll, this is to give a good initial value for the optimization
         self.roll_radius = rospy.get_param("/roll/radius", 0.20)
         self.resolution = rospy.get_param("~maneuver_resolution", 0.10) # resolution for determining number of waypoints in the maneuver paths
         self.rescale_factor = rospy.get_param("~rescale_factor", 0.5) # Decreases the resolution of the image along each axis by this fraction
         self.max_angle = rospy.get_param("/forklift/steering/max_angle", 65*(np.pi/180.)) # deg
 
         # Optimization Parameters
+        print("Namespace: %s" % rospy.get_name())
+        self.optimization_method = rospy.get_param("~optimization_method", 0) # 0 = use hardcoded, 1 = use scipy, 2 = use pyipopt
         self.start_x_s = rospy.get_param("~start_x_s", 11.5)
         self.start_y_s = rospy.get_param("~start_y_s", -6.8)
         self.start_theta_s = rospy.get_param("~start_theta_s", 0.2)
@@ -403,15 +406,13 @@ class ManeuverPath:
 
         return obstacles
 
-    def obstaclesInManeuver(self, pose_s, pose_m, pose_f, obstacles):
+    def obstaclesInManeuver(self, pose_s, obstacles):
         '''
         Outputs the number of obstacles present in the maneuver bounding box.
 
         Args:
         -----
         pose_s: starting pose as Pose2D object
-        pose_m: middle pose as Pose2D object
-        pose_f: final pose as Pose2D object
         obstacles: mx2 numpy array of 2D points representing the position of
                    obstacles
 
@@ -419,29 +420,13 @@ class ManeuverPath:
         --------
         num_obstacles: number of obstacles within the maneuver bounding box
         '''
-        # FIXME: Currently removed to allow more feasible area and to perform an automatic differentiation using 'autograd'. It does not like "ConvexHull" method from scipy.
-        # #===== Convex Hull Method =====#
-        # # Create polygon of points representing the bounding box
-        # polygon = self.maneuverBoundingBox(pose_s, pose_m, pose_f)
-        # # Determine which points are inside the boundary
-        # [points_in, points_on] = pointInPolygon(obstacles, polygon)
-        # num_obstacles = np.sum(points_in)
-
-        #===== Box around three poses only =====#
+        #===== Box around single pose only =====#
         # Generate full list of bounding box points
         points_s = self.forkliftBoundingBox(pose_s)
         points_s = np.vstack((points_s, points_s[0,:]))
-        points_m = self.forkliftBoundingBox(pose_m)
-        points_m = np.vstack((points_m, points_m[0,:]))
-        points_f = self.forkliftBoundingBox(pose_f)
-        points_f = np.vstack((points_f, points_f[0,:]))
         # Determine which points are inside the boundaries
         [points_in, points_on] = pointInPolygon(obstacles, points_s)
         num_obstacles = np.sum(points_in)
-        [points_in, points_on] = pointInPolygon(obstacles, points_m)
-        num_obstacles = num_obstacles + np.sum(points_in)
-        [points_in, points_on] = pointInPolygon(obstacles, points_f)
-        num_obstacles = num_obstacles + np.sum(points_in)
 
         return num_obstacles
 
@@ -455,76 +440,58 @@ class ManeuverPath:
 
         Args:
         -----
-        x: [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
+        x: [x_s, y_s]
         x_s: forklift starting 'x' position of maneuver
         y_s: forklist starting 'y' position of maneuver
-        theta_s: forklift starting 'yaw' angle of maneuver
-        r_1: turning radius of initial maneuver segment (can be positive or
-             negative, must be bounded by the radius of the max steering angle)
-        alpha_1: arc angle of initial maneuver segment (can be positive or
-                 negative)
-        r_2: turning radius of second maneuver segment (must be positive so its
-             sign can be adjusted to be opposite of r_1, only the magnitude of
-             r_2 is important)
-        alpha_2: arc angle of second maneuver segment (must be positive so its
-                 sign can be adjusted to be opposite of alpha_1, only the
-                 magnitude of alpha_2 is important)
 
         params: {"current_pose" : pose, "forklift_length" : L_f, "weights" :
                  [w_1, w_2, w_3]}
-        "current_pose" : [pose]: the forklift's current pose provided as Pose2D
-                         object containing the (x,y) position and yaw angle, theta.
+        "current_pose" : [x,y,yaw]: the forklift's current pose provided as list containing the (x,y) position and yaw angle, theta.
         "forklift_length" : L_f: length of the forklift from clamp tip to back.
-        "weights" : [w_1, w_2, w_3, w_4]: weights for the cost, w_1 = weight for
-                    distance error between the approach point and the point one
-                    forklift length forward from the final pose of the
-                    maneuver, w_2 = weight for the maneuver length, w_3 =
-                    weight for the distance error between the maneuver starting
-                    position and the forklift's current position, w_4 = weight for the angle error between forklift approach orientation and the roll approach orientation (ideally should be PI radians off from each other)
+        "weights" : [w_1, w_2]: weights for the cost, w_1 = weight for distance error between the desired approach radius and the current distance to the roll, w_2 = weight for the cross track error between the ideal approach line and the current position.
 
         Returns:
         --------
         J: the cost of the maneuver using the given design variables
         '''
         # Unpack variables and parameters
+        # Starting position
         x_s = x[0]
         y_s = x[1]
-        theta_s = x[2]
-        r_1 = x[3]
-        alpha_1 = x[4]
-        r_2 = x[5]
-        alpha_2 = x[6]
-        current_pose = params["current_pose"]
-        L_f = params["forklift_length"]
-        weights = params["weights"]
+        # Point the pose towards the center of the roll
+        theta_s = np.arctan2(self.target_y - y_s, self.target_x - x_s)
+
+        # Ideal approach position
+        ideal_x = self.target_x + self.approach_pose_offset*np.cos(self.target_approach_angle)
+        ideal_y = self.target_y + self.approach_pose_offset*np.sin(self.target_approach_angle)
 
         # Covnert state to pose
         pose_s = Pose2D(x_s, y_s, theta_s)
 
-        # Get the maneuver poses based on the current design variables
-        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, r_2, alpha_2)
+        # Calculate the radius error
+        current_radius = np.sqrt((self.target_x - x_s)**2 + (self.target_y - y_s)**2)
+        radius_error = (current_radius - self.approach_pose_offset)**2
 
-        # Unpack poses
-        x_f = pose_f.x
-        y_f = pose_f.y
-        theta_f = wrapToPi(pose_f.theta)
+        # Calculate the cross track error
+        # Use law of cosines to get the angle between the starting point and the ideal approach line, then find the distance from the starting point to that line using Sine
+        #                             (x_s, y_s)
+        #                                 o
+        #                              /  |\
+        #                       B   /    c| \  A
+        #                        /\      t|  \
+        #                     /alpha     e|   \
+        # (roll_x, roll_y)  o ---------------- o (ideal_x, ideal_y)
+        #                             C
+        #
+        A = np.sqrt((ideal_x - x_s)**2 + (ideal_y - y_s)**2)
+        B = np.sqrt((self.target_x - x_s)**2 + (self.target_y - y_s)**2)
+        C = self.approach_pose_offset
+        alpha = np.arccos((C**2 + B**2 - A**2)/(2*C*B))
 
-        # Calculate the maneuver length
-        maneuver_length = self.maneuverLength(r_1, alpha_1, r_2, alpha_2)
-
-        # Calculate the second point of the B-spline approach curve and get the distance from the third point
-        point3 = [self.target_x + (self.roll_radius + self.base_to_clamp + self.total_length)*np.cos(self.target_approach_angle), self.target_y + (self.roll_radius + self.base_to_clamp + self.total_length)*np.sin(self.target_approach_angle)]
-        point2 = [L_f*np.cos(theta_f) + x_f, L_f*np.sin(theta_f) + y_f]
-        approach_error = np.sqrt((point3[0] - point2[0])**2 + (point3[1] - point2[1])**2)
-
-        # Calculate the distance between the maneuver start pose and the current forklift pose
-        start_error = np.sqrt((current_pose[0] - x_s)**2 + (current_pose[1] - y_s)**2)
-
-        # Approach angle error
-        angle_error = (wrapToPi(theta_f - (self.target_approach_angle + np.pi)))**2
+        cross_track_error = (np.sin(alpha)*B)**2
 
         # Calculate the weighted cost
-        J = weights[0]*approach_error + weights[1]*maneuver_length + weights[2]*start_error + weights[3]*angle_error
+        J = params["weights"][0]*radius_error + params["weights"][1]*cross_track_error
 
         return J
 
@@ -539,20 +506,9 @@ class ManeuverPath:
 
         Args:
         -----
-        x: [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
+        x: [x_s, y_s]
         x_s: forklift starting 'x' position of maneuver
         y_s: forklist starting 'y' position of maneuver
-        theta_s: forklift starting 'yaw' angle of maneuver
-        r_1: turning radius of initial maneuver segment (can be positive or
-             negative, must be bounded by the radius of the max steering angle)
-        alpha_1: arc angle of initial maneuver segment (can be positive or
-                 negative)
-        r_2: turning radius of second maneuver segment (must be positive so its
-             sign can be adjusted to be opposite of r_1, only the magnitude of
-             r_2 is important)
-        alpha_2: arc angle of second maneuver segment (must be positive so its
-                 sign can be adjusted to be opposite of alpha_1, only the
-                 magnitude of alpha_2 is important)
 
         params: {"obstacles" : obstacles, "min_radius" : min_radius}
         "obstacles" : obstacles: mx2 numpy array of obstacle locations (x,y)
@@ -560,30 +516,19 @@ class ManeuverPath:
 
         Returns:
         --------
-        C: (2,) numpy array containing the constraint values
+        C: number of obstacles in the bounding box
         '''
         # Unpack variables and parameters
         x_s = x[0]
         y_s = x[1]
-        theta_s = x[2]
-        r_1 = x[3]
-        alpha_1 = x[4]
-        r_2 = x[5]
-        alpha_2 = x[6]
+        # Point the pose towards the center of the roll
+        theta_s = np.arctan2(self.target_y - y_s, self.target_x - x_s)
 
         # Convert states to poses
         pose_s = Pose2D(x_s, y_s, theta_s)
 
-        # Get the maneuver poses based on the current design variables
-        [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, r_2, alpha_2)
-
         # Frist constraint
-        C_0 = -self.obstaclesInManeuver(pose_s, pose_m, pose_f, params["obstacles"])
-
-        # Second constraint
-        C_1 = abs(x[3]) - params["min_radius"]
-
-        C = np.array([C_0, C_1])
+        C = -self.obstaclesInManeuver(pose_s, params["obstacles"])
 
         return C
 
@@ -603,17 +548,15 @@ class ManeuverPath:
             elements are for the first constraint and the second 7 are for the
             second constraint
         '''
-        g = np.zeros(2*x.size)
+        g = np.zeros(1*x.size)
         delta = 0.00000001
         for i in range(x.size):
             dx = x
             dx[i] = dx[i] + delta
             dC = (self.maneuverIneqConstraints(dx, params) - self.maneuverIneqConstraints(x, params)) / delta
-            g[i] = dC[0]
-            g[i+x.size] = dC[1]
+            g[i] = dC
 
         return g
-
 
     def optimizeManeuver(self):
         '''
@@ -652,38 +595,10 @@ class ManeuverPath:
 
             # DEBUG:
             print("Running maneuver optimization...")
-
-            # Set initial guess
-            x_s = self.target_x + np.cos(self.target_approach_angle)*self.approach_pose_offset
-            y_s = self.target_y + np.sin(self.target_approach_angle)*self.approach_pose_offset
-            theta_s = self.target_approach_angle # the starting pose is facing backwards, so the approach angle is the same as the starting orientation rather than adding 180deg
-            r_1 = 2
-            alpha_1 = -np.pi/2
-            r_2 = 2
-            alpha_2 = np.pi/2
-
-            # # DEBUG: Print starting path for optimizer
-            # pose_s = Pose2D(x_s, y_s, theta_s)
-            # [pose_m, pose_f] = self.maneuverPoses(pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
-            #
-            # path = self.maneuverSegmentPath(pose_s, r_1, alpha_1)
-            # path.extend(self.maneuverSegmentPath(pose_m, r_2*-np.sign(r_1), alpha_2*-np.sign(alpha_1)))
-            # self.maneuver_path.header.stamp = rospy.Time.now()
-            # self.maneuver_path.poses = []
-            # for i in range(len(path)):
-            #     point = PoseStamped()
-            #     point.pose.position.x = path[i][0]
-            #     point.pose.position.y = path[i][1]
-            #     self.maneuver_path.poses.append(point)
-            #
-            # self.path_pub.publish(self.maneuver_path)
-            # raw_input("Pause")
-
             # Initial value for optimization
-            #x0 = [x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2]
-            x0 = [self.start_x_s, self.start_y_s, self.start_theta_s, self.start_r_1, self.start_alpha_1, self.start_r_2, self.start_alpha_2]
-            lower_bounds = [20, 16, -np.pi, -5*np.pi, -np.pi, self.min_radius, np.pi/10]
-            upper_bounds = [-2, -5, np.pi, 5*np.pi, np.pi, 5*np.pi, np.pi]
+            x0 = [self.start_x_s, self.start_y_s]
+            lower_bounds = [-2, -16]
+            upper_bounds = [20, 5]
 
             # Set params
             # TODO: add the forklifts current pose from "/odom"
@@ -694,6 +609,8 @@ class ManeuverPath:
             current_pose2D.theta = euler_angles[2]
 
             params = {"current_pose" : [current_pose2D.x,current_pose2D.y,current_pose2D.theta], "forklift_length" : (self.base_to_back + self.base_to_clamp), "weights" : [10, 1, 0.1, 1], "obstacles" : self.obstacles, "min_radius" : self.min_radius}
+
+            print("Using optimization method: %d" % self.optimization_method)
 
             #==================================================================#
             # vvv Add Autograd gradient functions here if you get to it vvv
@@ -706,8 +623,12 @@ class ManeuverPath:
 
             # # Test Gradients against finite difference method
             # delta = 0.0000001
-            # x = np.array([-5, -3, 1, 1, 1, 1, 1], dtype=np.float)
-            # dx = x
+            # x = np.array([self.start_x_s, self.start_y_s], dtype=np.float)
+            # dx = deepcopy(x)
+            # dx[0] = x[0] + delta
+            # print("Objective: ")
+            # print(self.maneuverObjective(x, params))
+            # print(self.maneuverObjective(dx, params))
             # print("Autograd:")
             # print(self.grad_maneuverObjective(x))
             # print("Finite Difference:")
@@ -727,25 +648,21 @@ class ManeuverPath:
             #==================================================================#
             # scipy.optimize.minimize optimizer
             #==================================================================#
-            use_scipy = False
-            if (use_scipy):
+            if (self.optimization_method == 1):
                 # Set up optimization problem
                 obj = lambda x: self.maneuverObjective(x, params)
+                obj_bfgs = lambda x: self.maneuverObjective(x, params)
                 ineq_con = {'type': 'ineq',
                             'fun' : lambda x: self.maneuverIneqConstraints(x, params),
-                            'jac' : self.jac_maneuverIneqConstraints}
+                            'jac' : None}
                 bounds = [(lower_bounds[0], upper_bounds[0]),
-                          (lower_bounds[1], upper_bounds[1]),
-                          (lower_bounds[2], upper_bounds[2]),
-                          (lower_bounds[3], upper_bounds[3]),
-                          (lower_bounds[4], upper_bounds[4]),
-                          (lower_bounds[5], upper_bounds[5]),
-                          (lower_bounds[6], upper_bounds[6])]
+                          (lower_bounds[1], upper_bounds[1])]
 
                 # Optimize
                 tic = time.time()
-                res = minimize(obj, x0, jac=self.grad_maneuverObjective, method='SLSQP', bounds=bounds, constraints=ineq_con)
-                # res = minimize(obj, x0, method='BFGS', bounds=bounds, constraints=ineq_con)
+                #res = minimize(obj, x0, jac=self.grad_maneuverObjective, method='SLSQP', bounds=bounds, constraints=ineq_con)
+                #res = minimize(obj, x0, method='SLSQP', bounds=bounds, constraints=ineq_con)
+                res = minimize(obj_bfgs, x0, method='COBYLA', bounds=bounds, constraints=ineq_con)
                 toc = time.time()
 
                 # DEBUG:
@@ -753,16 +670,15 @@ class ManeuverPath:
                 print("time: %f(sec)" % (toc - tic))
                 print("Success: %s" % res.success)
                 print("Message: %s" % res.message)
-                print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (res.x[0], res.x[1], res.x[2], res.x[3], res.x[4], res.x[5], res.x[6]))
+                print("Results:\n  x: %f,  y: %f" % (res.x[0], res.x[1]))
 
                 # Store result
                 x_s = res.x[0]
                 y_s = res.x[1]
-                theta_s = res.x[2]
-                r_1 = res.x[3]
-                alpha_1 = res.x[4]
-                r_2 = res.x[5]
-                alpha_2 = res.x[6]
+
+                # Update starting point to be the current result
+                self.start_x_s = x_s
+                self.start_y_s = y_s
 
                 self.optimization_success = res.success
                 message = res.message
@@ -773,18 +689,17 @@ class ManeuverPath:
             #==================================================================#
             # IPOPT Optimizer
             #==================================================================#
-            use_ipopt = False
-            if (use_ipopt):
+            if (self.optimization_method == 2):
                 # Initial value for optimization
-                x0_ip = np.array([x_s, y_s, theta_s, r_1, alpha_1, r_2, alpha_2])
+                x0_ip = np.array([x0[0], x0[1]])
 
-                nvar = 7
+                nvar = 2
                 x_L = np.array(lower_bounds, dtype=np.float_)
                 x_U = np.array(upper_bounds, dtype=np.float_)
 
-                ncon = 2
-                g_L = np.array([0, 0], dtype=np.float_)
-                g_U = np.array([0, pyipopt.NLP_UPPER_BOUND_INF], dtype=np.float_)
+                ncon = 1
+                g_L = np.array([0], dtype=np.float_)
+                g_U = np.array([0], dtype=np.float_)
 
                 nnzj = nvar*ncon
                 nnzh = nvar**2
@@ -821,7 +736,9 @@ class ManeuverPath:
                         constraint_sum = constraint_sum + lagrange[1]*constraint_hessian[1,:,:]
                         return obj_factor*self.hessian_maneuverObjective(x) + constraint_sum
 
-                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g, eval_h)
+                # Not using hessian, remove this line when using it
+                nnzh = 0
+                nlp = pyipopt.create(nvar, x_L, x_U, ncon, g_L, g_U, nnzj, nnzh, eval_f, eval_grad_f, eval_g, eval_jac_g)
                 pyipopt.set_loglevel(0)
 
                 tic = time.time()
@@ -851,16 +768,11 @@ class ManeuverPath:
                 print("time: %f" % (toc - tic))
                 print("Success: %s" % status)
                 print("Message: %s" % "")
-                print("Results:\n  x: %f,  y: %f,  theta: %f\n  r_1: %f,  alpha_1: %f\n  r_2: %f,  alpha_2: %f" % (x[0], x[1], x[2], x[3], x[4], x[5], x[6]))
+                print("Results:\n  x: %f,  y: %f" % (x[0], x[1]))
 
                 # Store result
                 x_s = x[0]
                 y_s = x[1]
-                theta_s = x[2]
-                r_1 = x[3]
-                alpha_1 = x[4]
-                r_2 = x[5]
-                alpha_2 = x[6]
 
                 self.optimization_success = (status > 0)
                 message = "ipopt optimization finished with status: {0:d}".format(status)
@@ -871,25 +783,21 @@ class ManeuverPath:
             #=================================================================#
             # Use hardcoded value
             #=================================================================#
-            use_hardcoded = True
-            if (use_hardcoded):
+            if (self.optimization_method == 0):
                 x_s = x0[0]
                 y_s = x0[1]
-                theta_s = x0[2]
-                r_1 = x0[3]
-                alpha_1 = x0[4]
-                r_2 = x0[5]
-                alpha_2 = x0[6]
 
                 self.optimization_success = 1
                 message = "used hardcoded starting value"
+            #=================================================================#
+            # Use hardcoded value
+            #=================================================================#
 
-            # NOTE: remember to make the sign of r_2 opposite of r_1 and alpha_2 opposite of alpha_1
-            r_2 = -np.sign(r_1)*r_2
-            alpha_2 = -np.sign(alpha_1)*alpha_2
+            # Print optimized point
+            print("Approach starting point: (%0.4f, %0.4f)" % (x_s, y_s))
 
-            self.pose_s = Pose2D(x_s, y_s, theta_s)
-            [self.pose_m, self.pose_f] = self.maneuverPoses(self.pose_s, r_1, alpha_1, abs(r_2), abs(alpha_2)) # this function expects r_2 and alpha_2 to be positve values
+            # Set initial pose angle for the forklift to be the direction facing the roll
+            theta_s = np.arctan2(self.target_y - y_s, self.target_x - x_s)
 
             # Initialize path messages
             current_time = rospy.Time.now()
@@ -907,48 +815,44 @@ class ManeuverPath:
             path2_gear_msg.path.header.frame_id = "odom"
 
             # Publish first segment of maneuver
-            path1 = self.maneuverSegmentPath(self.pose_s, r_1, alpha_1)
-            for i in range(len(path1)):
-                point = PoseStamped()
-                point.header.frame_id = "odom"
-                point.pose.position.x = path1[i][0]
-                point.pose.position.y = path1[i][1]
-                path1_msg.poses.append(point)
-                path1_gear_msg.path.poses.append(point)
+            # NOTE: Just set the path to be a single point at the current position. This will make the master controller work the same and quickly move through the two maneuver paths
+            point = PoseStamped()
+            point.header.frame_id = "odom"
+            point.pose.position.x = self.current_pose.position.x
+            point.pose.position.y = self.current_pose.position.y
+            path1_msg.poses.append(point)
+            path1_gear_msg.path.poses.append(point)
             # Set gear, positive alpha = forward gear
             self.path1_pub.publish(path1_msg)
-            path1_gear_msg.gear = np.sign(alpha_1)
+            path1_gear_msg.gear = 1
             self.path1_gear_pub.publish(path1_gear_msg)
 
             # Publish second segment of maneuver
-            path2 = self.maneuverSegmentPath(self.pose_m, r_2, alpha_2)
-            for i in range(len(path2)):
-                point = PoseStamped()
-                point.header.frame_id = "odom"
-                point.pose.position.x = path2[i][0]
-                point.pose.position.y = path2[i][1]
-                path2_msg.poses.append(point)
-                path2_gear_msg.path.poses.append(point)
+            point = PoseStamped()
+            point.header.frame_id = "odom"
+            point.pose.position.x = self.current_pose.position.x
+            point.pose.position.y = self.current_pose.position.y
+            path2_msg.poses.append(point)
+            path2_gear_msg.path.poses.append(point)
             # Set gear, positive alpha = forward gear
             self.path2_pub.publish(path2_msg)
-            path2_gear_msg.gear = np.sign(alpha_2)
+            path2_gear_msg.gear = 1
             self.path2_gear_pub.publish(path2_gear_msg)
-
 
             if (self.optimization_success):
                 # If optimization was successful, publish the new target
                 # position for the A* algorithm (you will want to make this a
                 # separate "goal" value distinct from the roll target position)
-                rospy.set_param("/control_panel_node/goal_x", float(self.pose_s.x))
-                rospy.set_param("/control_panel_node/goal_y", float(self.pose_s.y))
-                self.update_obstacle_end_pose = True
+                rospy.set_param("/control_panel_node/goal_x", float(x_s))
+                rospy.set_param("/control_panel_node/goal_y", float(y_s))
+                self.update_obstacle_end_pose = False
 
                 # Publish the starting pose for the approach b-spline path
                 approach_start_pose = PoseStamped()
                 approach_start_pose.header.frame_id = "/odom"
-                approach_start_pose.pose.position.x = self.pose_f.x
-                approach_start_pose.pose.position.y = self.pose_f.y
-                quat_forklift = quaternion_from_euler(0, 0, wrapToPi(self.pose_f.theta))
+                approach_start_pose.pose.position.x = x_s
+                approach_start_pose.pose.position.y = y_s
+                quat_forklift = quaternion_from_euler(0, 0, wrapToPi(theta_s))
                 approach_start_pose.pose.orientation.x = quat_forklift[0]
                 approach_start_pose.pose.orientation.y = quat_forklift[1]
                 approach_start_pose.pose.orientation.z = quat_forklift[2]

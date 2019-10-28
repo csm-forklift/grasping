@@ -1,4 +1,5 @@
 <!-- Starts cylinder detection with a lidar -->
+<!-- For cylinder detection testing without the forklift -->
 <launch>
     <!-- Prints output messages to screen for all nodes -->
     <arg name="debug" default="true" />
