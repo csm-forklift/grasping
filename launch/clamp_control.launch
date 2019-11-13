@@ -11,8 +11,6 @@
 
     <node pkg="grasping" name="clamp_control" type="clamp_control" output="screen">
         <param name="clamp_scale" value="0.7" />
-        <remap from="/clamp_control/clamp_movement" to="/clamp_switch_node/clamp_movement"/>
-        <remap from="/clamp_control/clamp_grasp" to="/clamp_switch_node/clamp_grasp"/>
     </node>
     
     <node pkg="joy" type="joy_node" name="joy_node">

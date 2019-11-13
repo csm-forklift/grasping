@@ -23,8 +23,8 @@ public:
 	{
 		joy_sub = nh.subscribe<sensor_msgs::Joy>("joy", 1, &ClampSwitch::joyCallback, this);
 		clamp_switch_pub = nh_.advertise<std_msgs::Bool>("clamp_switch", 1);
-		clamp_movement_pub = nh_.advertise<std_msgs::Float32>("clamp_movement", 1);
-		clamp_grasp_pub = nh_.advertise<std_msgs::Float32>("clamp_grasp", 1);	
+		clamp_movement_pub = nh.advertise<std_msgs::Float32>("/clamp_control/clamp_movement", 1);
+		clamp_grasp_pub = nh.advertise<std_msgs::Float32>("/clamp_control/clamp_grasp", 1);	
 
 		nh.param<int>("deadman", deadman_button, 4);
 		nh.param<double>("scale_linear", scale_linear, 1.0);
@@ -56,7 +56,7 @@ public:
 			clamp_movement.data = msg->axes[1];
 			clamp_movement.data = std::min(1.0, static_cast<double>(clamp_movement.data));
 			clamp_movement.data = std::max(-1.0, static_cast<double>(clamp_movement.data));
-			
+
 			clamp_movement.data *= scale_linear;
 			clamp_movement_pub.publish(clamp_movement);
 

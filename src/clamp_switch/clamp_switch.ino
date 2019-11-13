@@ -122,9 +122,9 @@ std_msgs::Float32 stretch_msg;
 ros::Publisher stretch_sensor_pub("stretch_length", &stretch_msg);
 
 // Clamp switch 
-ros::Subscriber<std_msgs::Bool> clamp_switch_sub("clamp_switch_node/clamp_switch", &switchCallback);
-ros::Subscriber<std_msgs::Float32> clamp_movement_sub("clamp_switch_node/clamp_movement", &clampmovementCallback);
-ros::Subscriber<std_msgs::Float32> clamp_grasp_sub("clamp_switch_node/clamp_grasp", &clampgraspCallback);
+ros::Subscriber<std_msgs::Bool> clamp_switch_sub("clamp_control/clamp_switch", &switchCallback);
+ros::Subscriber<std_msgs::Float32> clamp_movement_sub("clamp_control/clamp_movement", &clampmovementCallback);
+ros::Subscriber<std_msgs::Float32> clamp_grasp_sub("clamp_control/clamp_grasp", &clampgraspCallback);
 //
 void setup() 
 {
